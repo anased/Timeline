@@ -26,9 +26,10 @@ Persia, China, India, Europe).
 - **Filters and search.** Click the category chips to show or hide lanes
   (Alt/⌘-click shows only that lane), and search by text across titles,
   locations, descriptions and sources.
-- **Your data stays in your browser** (localStorage). Use **⋯ → Export** to
-  download a JSON backup, and **Import** to load it on another device or share
-  it. **Reset to sample data** brings back the starting set of about 75 events.
+- **Saving.** Every add, edit and delete is saved straight away (see
+  [Where edits are saved](#where-edits-are-saved)). The status next to the
+  subtitle shows "All changes saved", "Saving…" or "Not saved". Use
+  **⋯ → Export** to download a JSON backup and **Import** to load one.
 - Keyboard: **← / →** step through events in date order and **Esc** clears the
   selection. **Ctrl/⌘ + scroll** zooms the timeline, and **double-clicking**
   an event opens it for editing.
@@ -44,6 +45,20 @@ dependencies.
 - host it for free on **GitHub Pages**: in the repo go to *Settings → Pages*,
   set *Deploy from a branch*, and choose the branch and `/ (root)`.
 
+## Where edits are saved
+
+The same code runs in two ways:
+
+| How it's opened | Where edits go |
+| --- | --- |
+| As the hosted claude.ai page | The page's own database. Edits are kept and show up on every device you open it on, and with anyone you share the page with. |
+| `index.html` opened directly or hosted elsewhere | This browser's localStorage only. Use Export/Import to move data between browsers. **Reset to sample data** is available here. |
+
+To update the hosted page after changing the code, run
+`node scripts/build-artifact.mjs`. It bundles the HTML, CSS and JS into
+`dist/seerah-timeline.html`, which is then republished. The sample data isn't
+bundled, because the hosted page loads its events from the database.
+
 ## Files
 
 | File | Purpose |
@@ -52,6 +67,7 @@ dependencies.
 | `css/styles.css` | Styles, with light and dark themes and a mobile layout |
 | `js/app.js` | Rendering, editing, storage, import and export |
 | `js/seed-data.js` | The sample events and categories |
+| `scripts/build-artifact.mjs` | Bundles the app into one file for the hosted page |
 
 ## A note on dates
 

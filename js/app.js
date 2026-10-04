@@ -42,7 +42,8 @@
     window: WINDOWS.some(w => w.value === prefs.window) ? prefs.window : 1,
     query: "",
     selectedId: null,
-    editingId: null
+    editingId: null,
+    pendingCategory: null
   };
 
   const $ = sel => document.querySelector(sel);
@@ -95,6 +96,9 @@
   }
 
   function loadData() {
+    if (window.claude && typeof window.claude.use === "function" && !window.SEED_EVENTS) {
+      return { categories: [], events: [] }; // hosted page: data arrives from the database
+    }
     const stored = readJSON(DATA_KEY);
     if (stored && Array.isArray(stored.events)) {
       try {
@@ -104,10 +108,176 @@
     return seedData();
   }
 
-  function saveData() {
-    if (!writeJSON(DATA_KEY, { version: 1, categories: data.categories, events: data.events })) {
-      alert("Your changes could not be saved in this browser (storage is unavailable or full). Use Export to keep a copy.");
+  // Where edits are saved. As a hosted claude.ai page the timeline lives in the page's
+  // shared database ("cloud"); opened any other way it falls back to this browser's
+  // localStorage ("local").
+  const CATS_DOC = "meta/categories";
+  const EVENTS_COL = "events";
+  const store = {
+    mode: "local",
+    db: null,
+    canWrite: true,
+    loading: Boolean(window.claude && typeof window.claude.use === "function"),
+    status: "idle"
+  };
+
+  async function connectCloud() {
+    if (!store.loading) return;
+    let db = null, user = null;
+    try {
+      [db, user] = await Promise.all([window.claude.use("db"), window.claude.use("user")]);
+    } catch (_) { /* treated as unavailable */ }
+    if (!db) {
+      store.loading = false;
+      render();
+      return;
     }
+    store.mode = "cloud";
+    store.db = db;
+    if (user) {
+      try {
+        if (await user.can("data.write") === false) store.canWrite = false;
+      } catch (_) { /* keep editing on; a refused write decides */ }
+    }
+    let evDocs = null, catList = null;
+    const apply = () => {
+      if (evDocs === null || catList === null) return;
+      data = normalizeData({ categories: catList, events: evDocs });
+      store.loading = false;
+      if (ui.selectedId && !data.events.some(e => e.id === ui.selectedId)) ui.selectedId = null;
+      render();
+    };
+    const onError = err => {
+      store.loading = false;
+      setStatus("error");
+      toast(`The timeline stopped syncing (${err && err.message ? err.message : "connection lost"}). Reload the page to reconnect.`, true);
+      render();
+    };
+    db.collection(EVENTS_COL).limit(1000).onSnapshot(snap => {
+      evDocs = snap.docs
+        .map(d => Object.assign({}, d.data(), { id: d.id }))
+        .filter(e => toInt(e.startYear) !== null);
+      apply();
+    }, onError);
+    db.doc(CATS_DOC).onSnapshot(snap => {
+      const body = snap.exists ? snap.data() : null;
+      catList = body && Array.isArray(body.list) ? body.list : [];
+      apply();
+    }, onError);
+  }
+
+  // Persist a change that has already been applied to `data`.
+  async function persist({ events = [], deleted = [], categories = false } = {}) {
+    if (store.mode === "local") {
+      if (!writeJSON(DATA_KEY, { version: 1, categories: data.categories, events: data.events })) {
+        toast("Your changes could not be saved in this browser (storage is unavailable or full). Use Export to keep a copy.", true);
+      }
+      return true;
+    }
+    const writes = [];
+    if (categories) writes.push(() => store.db.doc(CATS_DOC).set({ list: data.categories }));
+    events.forEach(ev => writes.push(() => store.db.collection(EVENTS_COL).doc(ev.id).set(Object.assign({}, ev))));
+    deleted.forEach(id => writes.push(() => store.db.collection(EVENTS_COL).doc(id).delete()));
+    setStatus("saving");
+    try {
+      for (let i = 0; i < writes.length; i += 6) {
+        await Promise.all(writes.slice(i, i + 6).map(w => w()));
+      }
+      setStatus("saved");
+      return true;
+    } catch (err) {
+      setStatus("error");
+      if (err && err.code === "invalid_argument" && store.canWrite) {
+        store.canWrite = false;
+        toast("You can view this timeline but not edit it. Ask the owner for edit access.", true);
+        render();
+      } else if (err && err.code === "quota_exceeded") {
+        toast("The timeline is full, so this change wasn't saved. Delete some events and try again.", true);
+      } else {
+        toast(`This change wasn't saved: ${err && err.message ? err.message : "unknown error"}. Check your connection and try again.`, true);
+      }
+      return false;
+    }
+  }
+
+  // Replace everything (import / reset).
+  function replaceAll(next) {
+    const keep = new Set(next.events.map(e => e.id));
+    const deleted = data.events.filter(e => !keep.has(e.id)).map(e => e.id);
+    data = next;
+    ui.selectedId = null;
+    ui.hidden.clear();
+    savePrefs();
+    render();
+    return persist({ events: data.events, deleted, categories: true });
+  }
+
+  function setStatus(status) {
+    store.status = status;
+    renderStatus();
+  }
+
+  function renderStatus() {
+    const node = document.getElementById("save-status");
+    if (!node) return;
+    let text, cls;
+    if (store.loading) [text, cls] = ["Loading…", "pending"];
+    else if (store.mode === "local") [text, cls] = ["Saved in this browser only", "local"];
+    else if (!store.canWrite) [text, cls] = ["View only", "local"];
+    else if (store.status === "saving") [text, cls] = ["Saving…", "pending"];
+    else if (store.status === "error") [text, cls] = ["Not saved", "error"];
+    else [text, cls] = ["All changes saved", "ok"];
+    node.textContent = text;
+    node.className = "save-status " + cls;
+    node.title = store.mode === "cloud"
+      ? "Edits are saved to this page and show up on every device."
+      : "Edits are kept in this browser's storage. Use Export to back them up.";
+  }
+
+  let toastTimer;
+  function toast(message, isError) {
+    const node = document.getElementById("toast");
+    node.textContent = message;
+    node.classList.toggle("error", Boolean(isError));
+    node.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { node.hidden = true; }, isError ? 8000 : 3500);
+  }
+
+  // In-page replacement for confirm()/prompt(), which hosted pages block.
+  function ask({ title, message = "", okLabel = "OK", danger = false, input = null }) {
+    const dlg = document.getElementById("ask-dialog");
+    const form = document.getElementById("ask-form");
+    const field = document.getElementById("ask-input");
+    const ok = document.getElementById("ask-ok");
+    document.getElementById("ask-title").textContent = title;
+    document.getElementById("ask-message").textContent = message;
+    document.getElementById("ask-input-wrap").hidden = !input;
+    document.getElementById("ask-input-label").textContent = input ? input.label : "";
+    field.value = input ? input.value || "" : "";
+    field.required = Boolean(input);
+    ok.textContent = okLabel;
+    ok.classList.toggle("danger-fill", danger);
+    return new Promise(resolve => {
+      const done = value => {
+        form.onsubmit = null;
+        document.getElementById("ask-cancel").onclick = null;
+        dlg.oncancel = null;
+        dlg.close();
+        resolve(value);
+      };
+      form.onsubmit = e => {
+        e.preventDefault();
+        done(input ? field.value.trim() : true);
+      };
+      document.getElementById("ask-cancel").onclick = () => done(input ? null : false);
+      dlg.oncancel = e => {
+        e.preventDefault();
+        done(input ? null : false);
+      };
+      dlg.showModal();
+      (input ? field : ok).focus();
+    });
   }
 
   function savePrefs() {
@@ -351,6 +521,8 @@
   // Rendering
   // ---------------------------------------------------------------------------
   function render() {
+    document.body.classList.toggle("read-only", !store.canWrite);
+    renderStatus();
     renderFilters();
     document.querySelectorAll(".segmented [data-view]").forEach(b => {
       b.setAttribute("aria-selected", String(b.dataset.view === ui.view));
@@ -439,9 +611,7 @@
       band = `<div class="tl-band" style="left:${LABEL_W + l}px;width:${r - l}px"></div>`;
     }
 
-    const empty = !cats.length
-      ? `<p class="tl-empty">All categories are hidden. Turn one on above.</p>`
-      : (!events.length ? `<p class="tl-empty">No events match your search.</p>` : "");
+    const empty = emptyMessage(cats, events);
 
     el.tlInner.style.width = `${LABEL_W + width}px`;
     el.tlInner.innerHTML = `
@@ -453,6 +623,18 @@
       ${empty}`;
   }
 
+  function emptyMessage(cats, events) {
+    if (store.loading) return `<p class="tl-empty">Loading your timeline…</p>`;
+    if (!data.events.length) {
+      return `<div class="tl-empty"><p><strong>No events yet.</strong></p><p>${store.canWrite
+        ? "Use <strong>+ Add event</strong> to add the first one, or import a JSON export from the <strong>⋯</strong> menu."
+        : "Events will appear here once the owner adds them."}</p></div>`;
+    }
+    if (!data.categories.some(c => !ui.hidden.has(c.id)) || !cats.length) return `<p class="tl-empty">All categories are hidden. Turn one on above.</p>`;
+    if (!events.length) return `<p class="tl-empty">No events match your search.</p>`;
+    return "";
+  }
+
   function renderGrid() {
     const events = visibleEvents();
     const cats = visibleCategories();
@@ -461,7 +643,7 @@
     const concurrent = visibleSel ? new Set(concurrentWith(visibleSel, events).map(e => e.id)) : null;
 
     if (!cats.length || !events.length) {
-      el.gridScroll.innerHTML = `<p class="tl-empty">${!cats.length ? "All categories are hidden. Turn one on above." : "No events match your search."}</p>`;
+      el.gridScroll.innerHTML = emptyMessage(cats, events);
       return;
     }
 
@@ -537,8 +719,8 @@
       ${sel.description ? `<p class="d-desc">${esc(sel.description)}</p>` : ""}
       ${sel.sources ? `<p class="d-src"><strong>Sources:</strong> ${esc(sel.sources)}</p>` : ""}
       <div class="d-actions">
-        <button type="button" class="btn" data-action="edit">Edit</button>
-        <button type="button" class="btn" data-action="add-near">+ Add event at this time</button>
+        <button type="button" class="btn needs-write" data-action="edit">Edit</button>
+        <button type="button" class="btn needs-write" data-action="add-near">+ Add event at this time</button>
       </div>
       <div class="d-concurrent">
         <div class="d-conc-head">
@@ -683,16 +865,20 @@
       el.formError.textContent = err;
       return false;
     }
+    let ev;
     if (ui.editingId) {
+      ev = normalizeEvent(Object.assign({}, v, { id: ui.editingId }));
       const i = data.events.findIndex(e => e.id === ui.editingId);
-      if (i !== -1) data.events[i] = normalizeEvent(Object.assign({}, v, { id: ui.editingId }));
+      if (i !== -1) data.events[i] = ev;
+      else data.events.push(ev);
     } else {
-      const ev = normalizeEvent(Object.assign({}, v, { id: uid() }));
+      ev = normalizeEvent(Object.assign({}, v, { id: uid() }));
       data.events.push(ev);
-      ui.editingId = ev.id;
     }
-    saveData();
-    const saved = ui.editingId;
+    const isNewCategory = !data.categories.some(c => c.id === ev.category);
+    persist({ events: [ev], categories: isNewCategory || ui.pendingCategory === ev.category });
+    ui.pendingCategory = null;
+    const saved = ev.id;
     const cat = categoryById(v.category);
     if (ui.hidden.has(cat.id)) { ui.hidden.delete(cat.id); savePrefs(); }
     ui.editingId = null;
@@ -734,7 +920,7 @@
     el.catDialog.showModal();
   }
 
-  function saveCategories() {
+  async function saveCategories() {
     const rows = [...el.catList.querySelectorAll(".cat-row")];
     const next = [];
     for (const r of rows) {
@@ -750,7 +936,13 @@
     const orphaned = data.events.filter(e => removed.some(c => c.id === e.category));
     if (orphaned.length) {
       const names = removed.filter(c => orphaned.some(e => e.category === c.id)).map(c => `"${c.name}"`).join(", ");
-      if (!confirm(`${orphaned.length} event(s) use ${names}. Delete those events too?`)) return false;
+      const yes = await ask({
+        title: "Delete events too?",
+        message: `${orphaned.length} event(s) use ${names}. Deleting the category also deletes them.`,
+        okLabel: `Delete ${orphaned.length} event(s)`,
+        danger: true
+      });
+      if (!yes) return false;
       data.events = data.events.filter(e => !orphaned.includes(e));
     }
     const taken = new Set(keep);
@@ -762,22 +954,36 @@
     data.categories = next;
     removed.forEach(c => ui.hidden.delete(c.id));
     if (ui.selectedId && !data.events.some(e => e.id === ui.selectedId)) ui.selectedId = null;
-    saveData();
     savePrefs();
     el.catDialog.close();
     render();
+    persist({ categories: true, deleted: orphaned.map(e => e.id) });
     return true;
   }
 
   // ---------------------------------------------------------------------------
   // Import / export
   // ---------------------------------------------------------------------------
-  function exportData() {
+  async function exportData() {
     const payload = { version: 1, exportedAt: new Date().toISOString(), categories: data.categories, events: [...data.events].sort(sortChrono) };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const json = JSON.stringify(payload, null, 2);
+    const filename = `seerah-timeline-${new Date().toISOString().slice(0, 10)}.json`;
+    if (window.claude && typeof window.claude.use === "function") {
+      // Hosted pages can't start downloads themselves; the viewer confirms the save.
+      const downloads = await window.claude.use("downloads").catch(() => null);
+      if (downloads) {
+        try {
+          await downloads.save({ filename, data: json });
+        } catch (err) {
+          if (!err || err.code !== "declined") toast(`Export failed: ${err && err.message ? err.message : "unknown error"}.`, true);
+        }
+        return;
+      }
+    }
+    const blob = new Blob([json], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `seerah-timeline-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -786,19 +992,22 @@
 
   function importFile(file) {
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
+      let next;
       try {
-        const next = normalizeData(JSON.parse(reader.result));
-        if (!confirm(`Replace your current ${data.events.length} events with ${next.events.length} events from "${file.name}"?`)) return;
-        data = next;
-        ui.selectedId = null;
-        ui.hidden.clear();
-        saveData();
-        savePrefs();
-        render();
+        next = normalizeData(JSON.parse(reader.result));
       } catch (err) {
-        alert("Could not import this file: " + err.message);
+        toast(`Couldn't import "${file.name}": ${err.message}`, true);
+        return;
       }
+      const yes = await ask({
+        title: "Replace all events?",
+        message: `This replaces your current ${data.events.length} events with the ${next.events.length} events in "${file.name}".`,
+        okLabel: "Replace",
+        danger: true
+      });
+      if (!yes) return;
+      if (await replaceAll(next)) toast(`Imported ${next.events.length} events.`);
     };
     reader.readAsText(file);
   }
@@ -849,7 +1058,7 @@
     });
     el.tlInner.addEventListener("dblclick", e => {
       const item = e.target.closest("[data-id]");
-      if (item) openEventDialog(data.events.find(x => x.id === item.dataset.id));
+      if (item && store.canWrite) openEventDialog(data.events.find(x => x.id === item.dataset.id));
     });
     el.tlScroll.addEventListener("wheel", e => {
       if (!(e.ctrlKey || e.metaKey)) return;
@@ -863,7 +1072,7 @@
     });
     el.gridScroll.addEventListener("dblclick", e => {
       const item = e.target.closest("[data-id]");
-      if (item) openEventDialog(data.events.find(x => x.id === item.dataset.id));
+      if (item && store.canWrite) openEventDialog(data.events.find(x => x.id === item.dataset.id));
     });
 
     el.detailsContent.addEventListener("click", e => {
@@ -904,33 +1113,44 @@
       el.formError.textContent = "";
       updateDatePreview();
     });
-    el.categorySelect.addEventListener("change", () => {
+    el.categorySelect.addEventListener("change", async () => {
       if (el.categorySelect.value !== "__new") {
         el.categorySelect.dataset.prev = el.categorySelect.value;
         return;
       }
-      const name = (prompt("Name of the new category:") || "").trim();
+      const name = await ask({ title: "New category", input: { label: "Name", value: "" }, okLabel: "Add category" });
       if (!name) {
         el.categorySelect.value = el.categorySelect.dataset.prev || "";
         return;
       }
       const existing = data.categories.find(c => c.name.toLowerCase() === name.toLowerCase());
       const cat = existing || addCategory(name);
-      if (!existing) saveData();
+      // Saved together with the event, so cancelling the form doesn't leave an empty lane.
+      if (!existing) ui.pendingCategory = cat.id;
       fillCategorySelect(cat.id);
       el.categorySelect.dataset.prev = cat.id;
       renderFilters();
     });
+    el.eventDialog.addEventListener("close", () => {
+      // Drop a category created in the form if the event wasn't saved with it.
+      if (ui.pendingCategory && !data.events.some(e => e.category === ui.pendingCategory)) {
+        data.categories = data.categories.filter(c => c.id !== ui.pendingCategory);
+        renderFilters();
+      }
+      ui.pendingCategory = null;
+    });
     $("#cancel-event").addEventListener("click", () => el.eventDialog.close());
-    $("#delete-event").addEventListener("click", () => {
+    $("#delete-event").addEventListener("click", async () => {
       const ev = data.events.find(e => e.id === ui.editingId);
-      if (!ev || !confirm(`Delete "${ev.title}"?`)) return;
+      if (!ev) return;
+      const yes = await ask({ title: "Delete this event?", message: `"${ev.title}" will be removed from the timeline.`, okLabel: "Delete", danger: true });
+      if (!yes) return;
       data.events = data.events.filter(e => e.id !== ev.id);
       if (ui.selectedId === ev.id) ui.selectedId = null;
       ui.editingId = null;
-      saveData();
       el.eventDialog.close();
       render();
+      persist({ deleted: [ev.id] });
     });
 
     // Categories dialog
@@ -963,15 +1183,17 @@
       if (file) importFile(file);
       e.target.value = "";
     });
-    $("#reset-data").addEventListener("click", () => {
+    const resetBtn = $("#reset-data");
+    if (!window.SEED_EVENTS) resetBtn.hidden = true;
+    resetBtn.addEventListener("click", async () => {
       closeMenu();
-      if (!confirm("Replace all your events and categories with the sample data? Export first if you want to keep your changes.")) return;
-      data = seedData();
-      ui.selectedId = null;
-      ui.hidden.clear();
-      saveData();
-      savePrefs();
-      render();
+      const yes = await ask({
+        title: "Reset to sample data?",
+        message: "All your events and categories will be replaced with the sample data. Export first if you want to keep your changes.",
+        okLabel: "Reset",
+        danger: true
+      });
+      if (yes) replaceAll(seedData());
     });
     document.addEventListener("click", e => {
       const m = document.querySelector("details.menu");
@@ -1003,4 +1225,5 @@
 
   bind();
   render();
+  connectCloud();
 })();
