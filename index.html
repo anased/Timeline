@@ -1,49 +1,52 @@
 <!doctype html>
-<html lang="en">
+<html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Seerah Timeline</title>
-  <meta name="description" content="An editable timeline of the life of the Prophet Muhammad ﷺ that shows the events that happened at the same time.">
+  <title>الخط الزمني للسيرة</title>
+  <meta name="description" content="خط زمني قابل للتعديل لسيرة النبي محمد ﷺ يُظهر الأحداث التي وقعت في الوقت نفسه.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Noto+Naskh+Arabic:wght@600;700&display=swap">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
   <header class="app-header">
     <div class="brand">
-      <h1>Seerah Timeline</h1>
-      <p class="subtitle">The life of the Prophet Muhammad ﷺ and the world around him <span class="save-status pending" id="save-status" role="status">Loading…</span></p>
+      <h1>الخط الزمني للسيرة النبوية</h1>
+      <p class="subtitle">حياة النبي محمد ﷺ وما كان يجري في العالم من حوله <span class="save-status pending" id="save-status" role="status">جارٍ التحميل…</span></p>
     </div>
     <div class="toolbar">
-      <input type="search" id="search" placeholder="Search events…" aria-label="Search events">
-      <div class="segmented" role="tablist" aria-label="View">
-        <button type="button" role="tab" data-view="timeline" aria-selected="true">Timeline</button>
-        <button type="button" role="tab" data-view="grid" aria-selected="false">Year by year</button>
+      <input type="search" id="search" placeholder="ابحث في الأحداث…" aria-label="ابحث في الأحداث">
+      <div class="segmented" role="tablist" aria-label="طريقة العرض">
+        <button type="button" role="tab" data-view="timeline" aria-selected="true">الخط الزمني</button>
+        <button type="button" role="tab" data-view="grid" aria-selected="false">سنة بسنة</button>
       </div>
-      <button type="button" class="btn primary needs-write" id="add-event">+ Add event</button>
+      <button type="button" class="btn primary needs-write" id="add-event">+ إضافة حدث</button>
       <details class="menu">
-        <summary class="btn" aria-label="More actions">⋯</summary>
+        <summary class="btn" aria-label="مزيد من الخيارات">⋯</summary>
         <div class="menu-items">
-          <button type="button" id="export-json">Export data (JSON)</button>
-          <button type="button" id="import-json" class="needs-write">Import data (JSON)…</button>
-          <button type="button" id="manage-categories" class="needs-write">Manage categories…</button>
+          <button type="button" id="export-json">تصدير البيانات (JSON)</button>
+          <button type="button" id="import-json" class="needs-write">استيراد البيانات (JSON)…</button>
+          <button type="button" id="manage-categories" class="needs-write">إدارة التصنيفات…</button>
           <hr class="needs-write">
-          <button type="button" id="reset-data" class="danger needs-write">Reset to sample data</button>
+          <button type="button" id="reset-data" class="danger needs-write">استعادة البيانات النموذجية</button>
         </div>
       </details>
       <input type="file" id="import-file" accept="application/json,.json" hidden>
     </div>
   </header>
 
-  <nav class="filters" id="category-filters" aria-label="Categories"></nav>
+  <nav class="filters" id="category-filters" aria-label="التصنيفات"></nav>
 
   <main class="layout">
-    <section class="view" id="timeline-view" aria-label="Timeline">
+    <section class="view" id="timeline-view" aria-label="الخط الزمني">
       <div class="view-controls">
-        <span class="hint">Click an event to see what else happened at the same time.</span>
+        <span class="hint">اضغط على أي حدث لترى ما وقع في الوقت نفسه.</span>
         <div class="zoom">
-          <button type="button" class="btn small" id="zoom-out" aria-label="Zoom out">−</button>
-          <button type="button" class="btn small" id="zoom-fit">Fit</button>
-          <button type="button" class="btn small" id="zoom-in" aria-label="Zoom in">+</button>
+          <button type="button" class="btn small" id="zoom-out" aria-label="تصغير">−</button>
+          <button type="button" class="btn small" id="zoom-fit">ملاءمة</button>
+          <button type="button" class="btn small" id="zoom-in" aria-label="تكبير">+</button>
         </div>
       </div>
       <div class="tl-scroll" id="tl-scroll">
@@ -51,15 +54,15 @@
       </div>
     </section>
 
-    <section class="view" id="grid-view" aria-label="Year by year" hidden>
+    <section class="view" id="grid-view" aria-label="سنة بسنة" hidden>
       <div class="grid-scroll" id="grid-scroll"></div>
     </section>
 
     <aside class="details" id="details" aria-live="polite">
       <div class="details-empty" id="details-empty">
-        <h2>Events at the same time</h2>
-        <p>Select any event to see its details and everything else that happened around the same time.</p>
-        <p class="muted">Dates are given in CE, with the approximate Hijri year (AH, or BH for before the Hijrah) and the Prophet's age.</p>
+        <h2>أحداث في الوقت نفسه</h2>
+        <p>اختر أي حدث لترى تفاصيله وكل ما وقع في الفترة نفسها.</p>
+        <p class="muted">التواريخ بالميلادي، ومعها السنة الهجرية التقريبية (هـ، أو ق.هـ لما قبل الهجرة) وعمر النبي ﷺ.</p>
       </div>
       <div id="details-content" hidden></div>
     </aside>
@@ -67,69 +70,69 @@
 
   <dialog id="event-dialog">
     <form id="event-form" method="dialog">
-      <h2 id="event-dialog-title">Add event</h2>
-      <label>Title
+      <h2 id="event-dialog-title">إضافة حدث</h2>
+      <label>العنوان
         <input name="title" required maxlength="200">
       </label>
       <div class="row">
-        <label>Category
+        <label>التصنيف
           <select name="category" id="category-select" required></select>
         </label>
-        <label class="checkbox"><input type="checkbox" name="approximate"> Approximate date</label>
+        <label class="checkbox"><input type="checkbox" name="approximate"> تاريخ تقريبي</label>
       </div>
       <fieldset>
-        <legend>Start</legend>
+        <legend>البداية</legend>
         <div class="row">
-          <label>Year (CE)
+          <label>السنة (ميلادي)
             <input name="startYear" type="number" required min="1" max="3000" step="1">
           </label>
-          <label>Month (optional)
+          <label>الشهر (اختياري)
             <select name="startMonth" class="month-select"></select>
           </label>
         </div>
       </fieldset>
       <fieldset>
-        <legend>End <span class="muted">(only for events that span time)</span></legend>
+        <legend>النهاية <span class="muted">(للأحداث الممتدة فقط)</span></legend>
         <div class="row">
-          <label>Year (CE)
+          <label>السنة (ميلادي)
             <input name="endYear" type="number" min="1" max="3000" step="1">
           </label>
-          <label>Month (optional)
+          <label>الشهر (اختياري)
             <select name="endMonth" class="month-select"></select>
           </label>
         </div>
       </fieldset>
       <p class="date-preview muted" id="date-preview"></p>
-      <label>Location
+      <label>المكان
         <input name="location" maxlength="200">
       </label>
-      <label>Description
+      <label>الوصف
         <textarea name="description" rows="4"></textarea>
       </label>
-      <label>Sources / notes
-        <textarea name="sources" rows="2" placeholder="e.g. Ibn Hisham, al-Raheeq al-Makhtum…"></textarea>
+      <label>المصادر / ملاحظات
+        <textarea name="sources" rows="2" placeholder="مثل: سيرة ابن هشام، الرحيق المختوم…"></textarea>
       </label>
       <p class="form-error" id="form-error" role="alert"></p>
       <div class="dialog-actions">
-        <button type="button" class="btn danger" id="delete-event">Delete</button>
+        <button type="button" class="btn danger" id="delete-event">حذف</button>
         <span class="spacer"></span>
-        <button type="button" class="btn" id="cancel-event">Cancel</button>
-        <button type="submit" class="btn primary">Save</button>
+        <button type="button" class="btn" id="cancel-event">إلغاء</button>
+        <button type="submit" class="btn primary">حفظ</button>
       </div>
     </form>
   </dialog>
 
   <dialog id="categories-dialog">
     <form method="dialog" id="categories-form">
-      <h2>Categories</h2>
-      <p class="muted">Each category is one lane on the timeline.</p>
+      <h2>التصنيفات</h2>
+      <p class="muted">كل تصنيف مسار مستقل على الخط الزمني.</p>
       <div id="categories-list"></div>
-      <button type="button" class="btn" id="add-category">+ Add category</button>
+      <button type="button" class="btn" id="add-category">+ إضافة تصنيف</button>
       <p class="form-error" id="categories-error" role="alert"></p>
       <div class="dialog-actions">
         <span class="spacer"></span>
-        <button type="button" class="btn" id="cancel-categories">Cancel</button>
-        <button type="submit" class="btn primary">Save</button>
+        <button type="button" class="btn" id="cancel-categories">إلغاء</button>
+        <button type="submit" class="btn primary">حفظ</button>
       </div>
     </form>
   </dialog>
@@ -143,8 +146,8 @@
       </label>
       <div class="dialog-actions">
         <span class="spacer"></span>
-        <button type="button" class="btn" id="ask-cancel">Cancel</button>
-        <button type="submit" class="btn primary" id="ask-ok">OK</button>
+        <button type="button" class="btn" id="ask-cancel">إلغاء</button>
+        <button type="submit" class="btn primary" id="ask-ok">موافق</button>
       </div>
     </form>
   </dialog>

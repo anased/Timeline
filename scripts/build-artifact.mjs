@@ -13,11 +13,14 @@ const read = p => readFileSync(join(root, p), "utf8");
 const html = read("index.html");
 const title = html.match(/<title>([\s\S]*?)<\/title>/)[1];
 const body = html.match(/<body>([\s\S]*?)<script/)[1];
+// Google Fonts links from <head> (the only stylesheet host hosted pages allow).
+const fontLinks = (html.match(/<link [^>]*fonts\.(googleapis|gstatic)\.com[^>]*>/g) || []).join("\n");
 const css = read("css/styles.css");
 const js = read("js/app.js");
 if (/<\/script/i.test(js)) throw new Error("app.js must not contain a closing script tag");
 
 const out = `<title>${title}</title>
+${fontLinks}
 <style>
 ${css}
 </style>

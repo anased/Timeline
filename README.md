@@ -1,4 +1,10 @@
-# Seerah Timeline
+# Seerah Timeline — الخط الزمني للسيرة النبوية
+
+The app's interface and sample data are in **Arabic** and laid out right to
+left: time runs from right (earlier) to left (later), and lane labels sit on
+the right. Dates show the CE year with "م", Hijri years with "هـ" (or "ق.هـ"
+before the Hijrah), and the Prophet's age. Search ignores harakat and common
+spelling variants (أ/إ/آ/ا, ة/ه, ى/ي).
 
 An editable timeline of the life of the Prophet Muhammad ﷺ. It is built to show
 **what happened at the same time**, in his life, among his family and

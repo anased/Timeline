@@ -6,7 +6,11 @@
   // ---------------------------------------------------------------------------
   const DATA_KEY = "seerah-timeline:data:v1";
   const PREFS_KEY = "seerah-timeline:prefs:v1";
-  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const MONTHS = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
+  // The page is Arabic and right-to-left: time runs from right (earlier) to left (later).
+  const RTL = true;
+  document.documentElement.lang = "ar";
+  document.documentElement.dir = "rtl";
   const PALETTE = ["#0f766e", "#b45309", "#be185d", "#4338ca", "#b91c1c", "#7e22ce", "#475569",
     "#15803d", "#0369a1", "#a16207", "#9d174d", "#1d4ed8"];
   const BIRTH_YEAR = 570.3; // approx. Rabi' al-Awwal of the Year of the Elephant
@@ -16,15 +20,15 @@
   const MAX_LABEL_W = 240;
   const MIN_PPY = 6, MAX_PPY = 480;
   const ERAS = [
-    { name: "Before prophethood", from: 570.3, to: 610.6 },
-    { name: "Meccan period", from: 610.6, to: 622.7 },
-    { name: "Madinan period", from: 622.7, to: 632.45 }
+    { name: "قبل البعثة", from: 570.3, to: 610.6 },
+    { name: "العهد المكي", from: 610.6, to: 622.7 },
+    { name: "العهد المدني", from: 622.7, to: 632.45 }
   ];
   const WINDOWS = [
-    { value: 0, label: "Overlapping in time" },
-    { value: 1, label: "Within ±1 year" },
-    { value: 2, label: "Within ±2 years" },
-    { value: 5, label: "Within ±5 years" }
+    { value: 0, label: "المتداخلة زمنيًا" },
+    { value: 1, label: "في حدود سنة" },
+    { value: 2, label: "في حدود سنتين" },
+    { value: 5, label: "في حدود خمس سنين" }
   ];
 
   // ---------------------------------------------------------------------------
@@ -150,7 +154,7 @@
     const onError = err => {
       store.loading = false;
       setStatus("error");
-      toast(`The timeline stopped syncing (${err && err.message ? err.message : "connection lost"}). Reload the page to reconnect.`, true);
+      toast(`توقفت مزامنة الخط الزمني (${err && err.message ? err.message : "انقطع الاتصال"}). أعد تحميل الصفحة لإعادة الاتصال.`, true);
       render();
     };
     db.collection(EVENTS_COL).limit(1000).onSnapshot(snap => {
@@ -170,7 +174,7 @@
   async function persist({ events = [], deleted = [], categories = false } = {}) {
     if (store.mode === "local") {
       if (!writeJSON(DATA_KEY, { version: 1, categories: data.categories, events: data.events })) {
-        toast("Your changes could not be saved in this browser (storage is unavailable or full). Use Export to keep a copy.", true);
+        toast("تعذّر حفظ تعديلاتك في هذا المتصفح (التخزين غير متاح أو ممتلئ). استخدم التصدير للاحتفاظ بنسخة.", true);
       }
       return true;
     }
@@ -189,12 +193,12 @@
       setStatus("error");
       if (err && err.code === "invalid_argument" && store.canWrite) {
         store.canWrite = false;
-        toast("You can view this timeline but not edit it. Ask the owner for edit access.", true);
+        toast("يمكنك عرض هذا الخط الزمني دون تعديله. اطلب من المالك صلاحية التعديل.", true);
         render();
       } else if (err && err.code === "quota_exceeded") {
-        toast("The timeline is full, so this change wasn't saved. Delete some events and try again.", true);
+        toast("امتلأ الخط الزمني فلم يُحفظ هذا التعديل. احذف بعض الأحداث ثم حاول مجددًا.", true);
       } else {
-        toast(`This change wasn't saved: ${err && err.message ? err.message : "unknown error"}. Check your connection and try again.`, true);
+        toast(`لم يُحفظ هذا التعديل: ${err && err.message ? err.message : "خطأ غير معروف"}. تحقق من الاتصال ثم حاول مجددًا.`, true);
       }
       return false;
     }
@@ -221,17 +225,17 @@
     const node = document.getElementById("save-status");
     if (!node) return;
     let text, cls;
-    if (store.loading) [text, cls] = ["Loading…", "pending"];
-    else if (store.mode === "local") [text, cls] = ["Saved in this browser only", "local"];
-    else if (!store.canWrite) [text, cls] = ["View only", "local"];
-    else if (store.status === "saving") [text, cls] = ["Saving…", "pending"];
-    else if (store.status === "error") [text, cls] = ["Not saved", "error"];
-    else [text, cls] = ["All changes saved", "ok"];
+    if (store.loading) [text, cls] = ["جارٍ التحميل…", "pending"];
+    else if (store.mode === "local") [text, cls] = ["محفوظ في هذا المتصفح فقط", "local"];
+    else if (!store.canWrite) [text, cls] = ["للعرض فقط", "local"];
+    else if (store.status === "saving") [text, cls] = ["جارٍ الحفظ…", "pending"];
+    else if (store.status === "error") [text, cls] = ["لم يُحفظ", "error"];
+    else [text, cls] = ["حُفظت كل التعديلات", "ok"];
     node.textContent = text;
     node.className = "save-status " + cls;
     node.title = store.mode === "cloud"
-      ? "Edits are saved to this page and show up on every device."
-      : "Edits are kept in this browser's storage. Use Export to back them up.";
+      ? "تُحفظ التعديلات في هذه الصفحة وتظهر على كل أجهزتك."
+      : "تُحفظ التعديلات في هذا المتصفح فقط. استخدم التصدير لأخذ نسخة احتياطية.";
   }
 
   let toastTimer;
@@ -305,12 +309,12 @@
 
   function normalizeEvent(e, categoryIds) {
     const startYear = toInt(e.startYear);
-    if (startYear === null) throw new Error(`Event "${e.title || "(untitled)"}" has no start year.`);
+    if (startYear === null) throw new Error(`الحدث "${e.title || "(بلا عنوان)"}" ليس له سنة بداية.`);
     let endYear = toInt(e.endYear);
     let endMonth = endYear === null ? null : toMonth(e.endMonth);
     const ev = {
       id: String(e.id || uid()),
-      title: String(e.title || "Untitled event").trim(),
+      title: String(e.title || "حدث بلا عنوان").trim(),
       category: String(e.category || "").trim() || "uncategorized",
       startYear,
       startMonth: toMonth(e.startMonth),
@@ -331,7 +335,7 @@
 
   function normalizeData(raw) {
     const events = Array.isArray(raw) ? raw : raw.events;
-    if (!Array.isArray(events)) throw new Error("The file does not contain an \"events\" list.");
+    if (!Array.isArray(events)) throw new Error("الملف لا يحتوي على قائمة \"events\".");
     const used = new Set();
     const seen = new Set();
     const outEvents = events.map(e => {
@@ -352,7 +356,7 @@
     used.forEach(id => {
       if (!catIds.has(id)) {
         catIds.add(id);
-        cats.push({ id, name: id === "uncategorized" ? "Uncategorized" : id, color: PALETTE[cats.length % PALETTE.length] });
+        cats.push({ id, name: id === "uncategorized" ? "بلا تصنيف" : id, color: PALETTE[cats.length % PALETTE.length] });
       }
     });
     return { categories: cats, events: outEvents };
@@ -400,13 +404,13 @@
   }
 
   function formatHijri(h) {
-    return h >= 1 ? `${h} AH` : `${1 - h} BH`;
+    return h >= 1 ? `${h} هـ` : `${1 - h} ق.هـ`;
   }
 
   function formatHijriRange(a, b) {
     if (a === b) return formatHijri(a);
-    if (a >= 1 && b >= 1) return `${a}–${b} AH`;
-    if (a <= 0 && b <= 0) return `${1 - a}–${1 - b} BH`;
+    if (a >= 1 && b >= 1) return `${a}–${b} هـ`;
+    if (a <= 0 && b <= 0) return `${1 - a}–${1 - b} ق.هـ`;
     return `${formatHijri(a)}–${formatHijri(b)}`;
   }
 
@@ -432,10 +436,10 @@
     const a = ageAt(s);
     if (isSpan(e)) {
       const b = ageAt(endOf(e) - 1 / 24);
-      if (a !== null && b !== null && b !== a) return `Age ~${a}–${b}`;
-      if (a === null && b !== null) return `Up to age ~${b}`;
+      if (a !== null && b !== null && b !== a) return `العمر نحو ${a}–${b}`;
+      if (a === null && b !== null) return `إلى عمر نحو ${b}`;
     }
-    return a === null ? "" : `Age ~${a}`;
+    return a === null ? "" : `العمر نحو ${a}`;
   }
 
   function formatYM(year, month) {
@@ -443,13 +447,13 @@
   }
 
   function dateLabel(e) {
-    let s = (e.approximate ? "c. " : "") + formatYM(e.startYear, e.startMonth);
+    let s = (e.approximate ? "نحو " : "") + formatYM(e.startYear, e.startMonth);
     if (isSpan(e)) {
       s += e.endYear === e.startYear && e.startMonth && e.endMonth
         ? `–${MONTHS[e.endMonth - 1]} ${e.endYear}`
         : `–${formatYM(e.endYear, e.endMonth)}`;
     }
-    return s + " CE";
+    return s + " م";
   }
 
   // ---------------------------------------------------------------------------
@@ -468,14 +472,23 @@
   }
 
   function sortChrono(a, b) {
-    return startOf(a) - startOf(b) || endOf(a) - endOf(b) || a.title.localeCompare(b.title);
+    return startOf(a) - startOf(b) || endOf(a) - endOf(b) || a.title.localeCompare(b.title, "ar");
+  }
+
+  // Search ignores harakat and the usual spelling variants (أ/إ/آ/ا, ة/ه, ى/ي).
+  function normalizeText(t) {
+    return String(t).toLowerCase()
+      .replace(/[\u064B-\u065F\u0670\u0640]/g, "")
+      .replace(/[أإآٱ]/g, "ا")
+      .replace(/ة/g, "ه")
+      .replace(/ى/g, "ي");
   }
 
   function matchesQuery(e) {
     if (!ui.query) return true;
-    const q = ui.query.toLowerCase();
+    const q = normalizeText(ui.query);
     return [e.title, e.location, e.description, e.sources, categoryById(e.category).name]
-      .some(f => f && f.toLowerCase().includes(q));
+      .some(f => f && normalizeText(f).includes(q));
   }
 
   function visibleCategories() {
@@ -561,12 +574,12 @@
     let ticks = "";
     for (let y = Math.ceil(minY / step) * step; y <= maxY; y += step) {
       const h = hijriYear(y, 7, 1);
-      ticks += `<div class="tick" style="left:${x(y)}px"><span class="tick-ce">${y}</span><span class="tick-ah">${formatHijri(h)}</span></div>`;
+      ticks += `<div class="tick" style="inset-inline-start:${x(y)}px"><span class="tick-ce">${y}</span><span class="tick-ah">${formatHijri(h)}</span></div>`;
     }
     const eras = ERAS.filter(r => r.to > minY && r.from < maxY).map(r => {
       const l = x(Math.max(r.from, minY));
       const w = x(Math.min(r.to, maxY)) - l;
-      return `<div class="era" style="left:${l}px;width:${w}px" title="${esc(r.name)}"><span style="left:${LABEL_W + 8}px">${esc(r.name)}</span></div>`;
+      return `<div class="era" style="inset-inline-start:${l}px;width:${w}px" title="${esc(r.name)}"><span style="inset-inline-start:${LABEL_W + 8}px">${esc(r.name)}</span></div>`;
     }).join("");
 
     let lanes = "";
@@ -591,10 +604,10 @@
         }
         if (e.approximate) cls.push("approx");
         html += `<button type="button" class="${cls.join(" ")}" data-id="${esc(e.id)}"
-          style="left:${left}px;top:${LANE_PAD + row * ROW_H}px;${span ? `--bar:${barW}px;width:${extent}px;` : ""}"
+          style="inset-inline-start:${left}px;top:${LANE_PAD + row * ROW_H}px;${span ? `--bar:${barW}px;width:${extent}px;` : ""}"
           title="${esc(e.title)} — ${esc(dateLabel(e))}">
           ${span ? `<span class="bar"></span>` : `<span class="dot"></span>`}
-          <span class="label" style="max-width:${MAX_LABEL_W}px;${span ? `left:${LABEL_W + 4}px;` : ""}">${esc(e.title)}</span>
+          <span class="label" style="max-width:${MAX_LABEL_W}px;${span ? `inset-inline-start:${LABEL_W + 4}px;` : ""}">${esc(e.title)}</span>
         </button>`;
       });
       const h = Math.max(1, rowsEnd.length) * ROW_H + LANE_PAD * 2;
@@ -608,7 +621,7 @@
     if (visibleSel) {
       const l = x(startOf(visibleSel) - ui.window);
       const r = x(endOf(visibleSel) + ui.window);
-      band = `<div class="tl-band" style="left:${LABEL_W + l}px;width:${r - l}px"></div>`;
+      band = `<div class="tl-band" style="inset-inline-start:${LABEL_W + l}px;width:${r - l}px"></div>`;
     }
 
     const empty = emptyMessage(cats, events);
@@ -616,7 +629,7 @@
     el.tlInner.style.width = `${LABEL_W + width}px`;
     el.tlInner.innerHTML = `
       <div class="tl-axis">
-        <div class="tl-corner" style="width:${LABEL_W}px">CE<br><span class="muted">Hijri (approx.)</span></div>
+        <div class="tl-corner" style="width:${LABEL_W}px">ميلادي<br><span class="muted">هجري (تقريبي)</span></div>
         <div class="tl-axis-track" style="width:${width}px">${eras}${ticks}</div>
       </div>
       <div class="tl-lanes">${band}${lanes}</div>
@@ -624,14 +637,14 @@
   }
 
   function emptyMessage(cats, events) {
-    if (store.loading) return `<p class="tl-empty">Loading your timeline…</p>`;
+    if (store.loading) return `<p class="tl-empty">جارٍ تحميل الخط الزمني…</p>`;
     if (!data.events.length) {
-      return `<div class="tl-empty"><p><strong>No events yet.</strong></p><p>${store.canWrite
-        ? "Use <strong>+ Add event</strong> to add the first one, or import a JSON export from the <strong>⋯</strong> menu."
-        : "Events will appear here once the owner adds them."}</p></div>`;
+      return `<div class="tl-empty"><p><strong>لا توجد أحداث بعد.</strong></p><p>${store.canWrite
+        ? "استخدم <strong>+ إضافة حدث</strong> لإضافة أول حدث، أو استورد ملف JSON من قائمة <strong>⋯</strong>."
+        : "ستظهر الأحداث هنا عندما يضيفها المالك."}</p></div>`;
     }
-    if (!data.categories.some(c => !ui.hidden.has(c.id)) || !cats.length) return `<p class="tl-empty">All categories are hidden. Turn one on above.</p>`;
-    if (!events.length) return `<p class="tl-empty">No events match your search.</p>`;
+    if (!data.categories.some(c => !ui.hidden.has(c.id)) || !cats.length) return `<p class="tl-empty">كل التصنيفات مخفية. فعّل أحدها من الأعلى.</p>`;
+    if (!events.length) return `<p class="tl-empty">لا توجد أحداث تطابق بحثك.</p>`;
     return "";
   }
 
@@ -676,12 +689,12 @@
         }).join("")}</td>`;
       });
       rows += `<tr class="${inWindow ? "in-window" : ""}" data-year="${y}">
-        <th scope="row"><span class="g-year">${y}</span><span class="g-sub">${esc(h)}</span>${age !== null ? `<span class="g-sub">Age ~${age}</span>` : ""}</th>
+        <th scope="row"><span class="g-year">${y}</span><span class="g-sub">${esc(h)}</span>${age !== null ? `<span class="g-sub">العمر نحو ${age}</span>` : ""}</th>
         ${cells}
       </tr>`;
     }
     el.gridScroll.innerHTML = `<table class="grid">
-      <thead><tr><th scope="col">Year (CE)</th>${cats.map(c => `<th scope="col" style="--c:${c.color}"><span class="swatch"></span>${esc(c.name)}</th>`).join("")}</tr></thead>
+      <thead><tr><th scope="col">السنة (ميلادي)</th>${cats.map(c => `<th scope="col" style="--c:${c.color}"><span class="swatch"></span>${esc(c.name)}</th>`).join("")}</tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
   }
@@ -708,24 +721,24 @@
 
     el.detailsContent.innerHTML = `
       <div class="d-nav">
-        <button type="button" class="btn small" data-goto="${prev ? esc(prev.id) : ""}" ${prev ? "" : "disabled"} title="Previous event (←)">← Prev</button>
-        <button type="button" class="btn small" data-action="close" title="Close (Esc)">Close</button>
-        <button type="button" class="btn small" data-goto="${next ? esc(next.id) : ""}" ${next ? "" : "disabled"} title="Next event (→)">Next →</button>
+        <button type="button" class="btn small" data-goto="${prev ? esc(prev.id) : ""}" ${prev ? "" : "disabled"} title="الحدث السابق">→ السابق</button>
+        <button type="button" class="btn small" data-action="close" title="إغلاق (Esc)">إغلاق</button>
+        <button type="button" class="btn small" data-goto="${next ? esc(next.id) : ""}" ${next ? "" : "disabled"} title="الحدث التالي">التالي ←</button>
       </div>
       <span class="cat-pill" style="--c:${cat.color}"><span class="swatch"></span>${esc(cat.name)}</span>
       <h2 class="d-title">${esc(sel.title)}</h2>
       <p class="d-date">${esc(dateLabel(sel))} · ${esc(hijriLabel(sel))}${age ? ` · ${esc(age)}` : ""}</p>
       ${sel.location ? `<p class="d-loc">📍 ${esc(sel.location)}</p>` : ""}
       ${sel.description ? `<p class="d-desc">${esc(sel.description)}</p>` : ""}
-      ${sel.sources ? `<p class="d-src"><strong>Sources:</strong> ${esc(sel.sources)}</p>` : ""}
+      ${sel.sources ? `<p class="d-src"><strong>المصادر:</strong> ${esc(sel.sources)}</p>` : ""}
       <div class="d-actions">
-        <button type="button" class="btn needs-write" data-action="edit">Edit</button>
-        <button type="button" class="btn needs-write" data-action="add-near">+ Add event at this time</button>
+        <button type="button" class="btn needs-write" data-action="edit">تعديل</button>
+        <button type="button" class="btn needs-write" data-action="add-near">+ إضافة حدث في هذا الوقت</button>
       </div>
       <div class="d-concurrent">
         <div class="d-conc-head">
-          <h3>Around the same time <span class="count">${conc.length}</span></h3>
-          <select id="window-select" aria-label="How close in time">
+          <h3>في الفترة نفسها <span class="count">${conc.length}</span></h3>
+          <select id="window-select" aria-label="مدى التقارب الزمني">
             ${WINDOWS.map(w => `<option value="${w.value}" ${w.value === ui.window ? "selected" : ""}>${w.label}</option>`).join("")}
           </select>
         </div>
@@ -738,7 +751,7 @@
                 <span class="l-date">${esc(dateLabel(e))}</span>
               </button></li>`).join("")}
             </ul>
-          </div>`).join("") : `<p class="muted">Nothing else in this time window${ui.query || ui.hidden.size ? " (with the current filters)" : ""}.</p>`}
+          </div>`).join("") : `<p class="muted">لا شيء آخر في هذه الفترة${ui.query || ui.hidden.size ? " (مع عوامل التصفية الحالية)" : ""}.</p>`}
       </div>`;
   }
 
@@ -755,12 +768,24 @@
     const node = (ui.view === "timeline" ? el.tlInner : el.gridScroll).querySelector(`[data-id="${CSS.escape(id)}"]`);
     if (!node) return;
     if (ui.view === "timeline") {
-      const target = node.offsetLeft + LABEL_W - el.tlScroll.clientWidth / 2 + 80;
-      el.tlScroll.scrollTo({ left: Math.max(0, target), behavior: "smooth" });
+      const start = parseFloat(node.style.getPropertyValue("inset-inline-start")) || 0;
+      const target = start + LABEL_W - el.tlScroll.clientWidth / 2 + 80;
+      setScrollStart(Math.max(0, target), true);
       node.scrollIntoView({ block: "nearest", behavior: "smooth" });
     } else {
       node.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
     }
+  }
+
+  // Distance scrolled from the start edge of the timeline (the right edge in RTL).
+  function scrollStart() {
+    return Math.abs(el.tlScroll.scrollLeft);
+  }
+
+  function setScrollStart(v, smooth) {
+    const left = RTL ? -v : v;
+    if (smooth) el.tlScroll.scrollTo({ left, behavior: "smooth" });
+    else el.tlScroll.scrollLeft = left;
   }
 
   function setZoom(ppy, anchorClientX) {
@@ -768,12 +793,12 @@
     ppy = clamp(Math.round(ppy * 100) / 100, MIN_PPY, MAX_PPY);
     if (ppy === old) return;
     const rect = el.tlScroll.getBoundingClientRect();
-    const anchor = anchorClientX === undefined ? rect.width / 2 : anchorClientX - rect.left;
-    const yearAtAnchor = (el.tlScroll.scrollLeft + anchor - LABEL_W) / old;
+    const anchor = anchorClientX === undefined ? rect.width / 2 : (RTL ? rect.right - anchorClientX : anchorClientX - rect.left);
+    const yearAtAnchor = (scrollStart() + anchor - LABEL_W) / old;
     ui.ppy = ppy;
     savePrefs();
     renderTimeline();
-    el.tlScroll.scrollLeft = yearAtAnchor * ppy + LABEL_W - anchor;
+    setScrollStart(yearAtAnchor * ppy + LABEL_W - anchor);
   }
 
   function fitZoom() {
@@ -781,7 +806,7 @@
     const [minY, maxY] = yearRange(events.length ? events : data.events);
     const avail = el.tlScroll.clientWidth - LABEL_W - 8;
     setZoom(Math.max(MIN_PPY, avail / (maxY - minY)));
-    el.tlScroll.scrollLeft = 0;
+    setScrollStart(0);
   }
 
   // ---------------------------------------------------------------------------
@@ -804,7 +829,7 @@
     const f = el.eventForm.elements;
     const src = ev || Object.assign({ title: "", category: data.categories[0] ? data.categories[0].id : "", startYear: "", startMonth: null,
       endYear: null, endMonth: null, approximate: false, location: "", description: "", sources: "" }, defaults || {});
-    $("#event-dialog-title").textContent = ev ? "Edit event" : "Add event";
+    $("#event-dialog-title").textContent = ev ? "تعديل الحدث" : "إضافة حدث";
     fillCategorySelect(src.category);
     f.title.value = src.title;
     f.startYear.value = src.startYear ?? "";
@@ -840,11 +865,11 @@
   }
 
   function validateForm(v) {
-    if (!v.title) return "Please enter a title.";
-    if (!v.category || v.category === "__new") return "Please choose a category.";
-    if (v.startYear === null) return "Please enter a start year.";
-    if (v.endYear === null && v.endMonth) return "Please enter an end year, or clear the end month.";
-    if (v.endYear !== null && endOf(v) <= startOf(v)) return "The end must be after the start.";
+    if (!v.title) return "اكتب عنوانًا للحدث.";
+    if (!v.category || v.category === "__new") return "اختر تصنيفًا.";
+    if (v.startYear === null) return "اكتب سنة البداية.";
+    if (v.endYear === null && v.endMonth) return "اكتب سنة النهاية، أو امسح شهر النهاية.";
+    if (v.endYear !== null && endOf(v) <= startOf(v)) return "يجب أن تكون النهاية بعد البداية.";
     return "";
   }
 
@@ -906,11 +931,11 @@
   // ---------------------------------------------------------------------------
   function catRow(c) {
     return `<div class="cat-row" data-id="${esc(c.id || "")}">
-      <input type="color" value="${esc(c.color)}" aria-label="Colour">
-      <input type="text" value="${esc(c.name)}" aria-label="Name" maxlength="60">
-      <button type="button" class="btn small" data-move="-1" aria-label="Move up">↑</button>
-      <button type="button" class="btn small" data-move="1" aria-label="Move down">↓</button>
-      <button type="button" class="btn small danger" data-remove aria-label="Delete">✕</button>
+      <input type="color" value="${esc(c.color)}" aria-label="اللون">
+      <input type="text" value="${esc(c.name)}" aria-label="الاسم" maxlength="60">
+      <button type="button" class="btn small" data-move="-1" aria-label="تحريك لأعلى">↑</button>
+      <button type="button" class="btn small" data-move="1" aria-label="تحريك لأسفل">↓</button>
+      <button type="button" class="btn small danger" data-remove aria-label="حذف">✕</button>
     </div>`;
   }
 
@@ -926,7 +951,7 @@
     for (const r of rows) {
       const name = r.querySelector('input[type="text"]').value.trim();
       if (!name) {
-        el.catError.textContent = "Every category needs a name.";
+        el.catError.textContent = "لكل تصنيف اسم لا بد منه.";
         return false;
       }
       next.push({ id: r.dataset.id, name, color: r.querySelector('input[type="color"]').value });
@@ -937,9 +962,9 @@
     if (orphaned.length) {
       const names = removed.filter(c => orphaned.some(e => e.category === c.id)).map(c => `"${c.name}"`).join(", ");
       const yes = await ask({
-        title: "Delete events too?",
-        message: `${orphaned.length} event(s) use ${names}. Deleting the category also deletes them.`,
-        okLabel: `Delete ${orphaned.length} event(s)`,
+        title: "حذف الأحداث أيضًا؟",
+        message: `عدد الأحداث في ${names}: ${orphaned.length}. حذف التصنيف يحذفها معه.`,
+        okLabel: `حذف الأحداث (${orphaned.length})`,
         danger: true
       });
       if (!yes) return false;
@@ -975,7 +1000,7 @@
         try {
           await downloads.save({ filename, data: json });
         } catch (err) {
-          if (!err || err.code !== "declined") toast(`Export failed: ${err && err.message ? err.message : "unknown error"}.`, true);
+          if (!err || err.code !== "declined") toast(`فشل التصدير: ${err && err.message ? err.message : "خطأ غير معروف"}.`, true);
         }
         return;
       }
@@ -997,17 +1022,17 @@
       try {
         next = normalizeData(JSON.parse(reader.result));
       } catch (err) {
-        toast(`Couldn't import "${file.name}": ${err.message}`, true);
+        toast(`تعذّر استيراد "${file.name}": ${err.message}`, true);
         return;
       }
       const yes = await ask({
-        title: "Replace all events?",
-        message: `This replaces your current ${data.events.length} events with the ${next.events.length} events in "${file.name}".`,
-        okLabel: "Replace",
+        title: "استبدال كل الأحداث؟",
+        message: `سيُستبدل بأحداثك الحالية (${data.events.length}) ما في الملف "${file.name}" (${next.events.length}).`,
+        okLabel: "استبدال",
         danger: true
       });
       if (!yes) return;
-      if (await replaceAll(next)) toast(`Imported ${next.events.length} events.`);
+      if (await replaceAll(next)) toast(`تم استيراد ${next.events.length} حدثًا.`);
     };
     reader.readAsText(file);
   }
@@ -1118,7 +1143,7 @@
         el.categorySelect.dataset.prev = el.categorySelect.value;
         return;
       }
-      const name = await ask({ title: "New category", input: { label: "Name", value: "" }, okLabel: "Add category" });
+      const name = await ask({ title: "تصنيف جديد", input: { label: "الاسم", value: "" }, okLabel: "إضافة التصنيف" });
       if (!name) {
         el.categorySelect.value = el.categorySelect.dataset.prev || "";
         return;
@@ -1143,7 +1168,7 @@
     $("#delete-event").addEventListener("click", async () => {
       const ev = data.events.find(e => e.id === ui.editingId);
       if (!ev) return;
-      const yes = await ask({ title: "Delete this event?", message: `"${ev.title}" will be removed from the timeline.`, okLabel: "Delete", danger: true });
+      const yes = await ask({ title: "حذف هذا الحدث؟", message: `سيُحذف "${ev.title}" من الخط الزمني.`, okLabel: "حذف", danger: true });
       if (!yes) return;
       data.events = data.events.filter(e => e.id !== ev.id);
       if (ui.selectedId === ev.id) ui.selectedId = null;
@@ -1188,9 +1213,9 @@
     resetBtn.addEventListener("click", async () => {
       closeMenu();
       const yes = await ask({
-        title: "Reset to sample data?",
-        message: "All your events and categories will be replaced with the sample data. Export first if you want to keep your changes.",
-        okLabel: "Reset",
+        title: "استعادة البيانات النموذجية؟",
+        message: "ستُستبدل كل أحداثك وتصنيفاتك بالبيانات النموذجية. صدّر نسخة أولًا إن أردت الاحتفاظ بتعديلاتك.",
+        okLabel: "استعادة",
         danger: true
       });
       if (yes) replaceAll(seedData());
@@ -1207,7 +1232,8 @@
       if (["input", "textarea", "select"].includes(tag)) return;
       if (e.key === "Escape" && ui.selectedId) return select(null);
       if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && ui.selectedId) {
-        const btn = el.detailsContent.querySelectorAll(".d-nav [data-goto]")[e.key === "ArrowLeft" ? 0 : 1];
+        const back = RTL ? e.key === "ArrowRight" : e.key === "ArrowLeft";
+        const btn = el.detailsContent.querySelectorAll(".d-nav [data-goto]")[back ? 0 : 1];
         if (btn && btn.dataset.goto) {
           e.preventDefault();
           select(btn.dataset.goto, { scroll: true });
@@ -1226,4 +1252,10 @@
   bind();
   render();
   connectCloud();
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => {
+      measureCtx = null;
+      if (ui.view === "timeline") renderTimeline();
+    });
+  }
 })();
