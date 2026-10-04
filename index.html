@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Seerah Timeline</title>
+  <meta name="description" content="An editable timeline of the life of the Prophet Muhammad ﷺ that shows the events that happened at the same time.">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <h1>Seerah Timeline</h1>
+      <p class="subtitle">The life of the Prophet Muhammad ﷺ and the world around him</p>
+    </div>
+    <div class="toolbar">
+      <input type="search" id="search" placeholder="Search events…" aria-label="Search events">
+      <div class="segmented" role="tablist" aria-label="View">
+        <button type="button" role="tab" data-view="timeline" aria-selected="true">Timeline</button>
+        <button type="button" role="tab" data-view="grid" aria-selected="false">Year by year</button>
+      </div>
+      <button type="button" class="btn primary" id="add-event">+ Add event</button>
+      <details class="menu">
+        <summary class="btn" aria-label="More actions">⋯</summary>
+        <div class="menu-items">
+          <button type="button" id="export-json">Export data (JSON)</button>
+          <button type="button" id="import-json">Import data (JSON)…</button>
+          <button type="button" id="manage-categories">Manage categories…</button>
+          <hr>
+          <button type="button" id="reset-data" class="danger">Reset to sample data</button>
+        </div>
+      </details>
+      <input type="file" id="import-file" accept="application/json,.json" hidden>
+    </div>
+  </header>
+
+  <nav class="filters" id="category-filters" aria-label="Categories"></nav>
+
+  <main class="layout">
+    <section class="view" id="timeline-view" aria-label="Timeline">
+      <div class="view-controls">
+        <span class="hint">Click an event to see what else happened at the same time.</span>
+        <div class="zoom">
+          <button type="button" class="btn small" id="zoom-out" aria-label="Zoom out">−</button>
+          <button type="button" class="btn small" id="zoom-fit">Fit</button>
+          <button type="button" class="btn small" id="zoom-in" aria-label="Zoom in">+</button>
+        </div>
+      </div>
+      <div class="tl-scroll" id="tl-scroll">
+        <div class="tl-inner" id="tl-inner"></div>
+      </div>
+    </section>
+
+    <section class="view" id="grid-view" aria-label="Year by year" hidden>
+      <div class="grid-scroll" id="grid-scroll"></div>
+    </section>
+
+    <aside class="details" id="details" aria-live="polite">
+      <div class="details-empty" id="details-empty">
+        <h2>Events at the same time</h2>
+        <p>Select any event to see its details and everything else that happened around the same time.</p>
+        <p class="muted">Dates are given in CE, with the approximate Hijri year (AH, or BH for before the Hijrah) and the Prophet's age.</p>
+      </div>
+      <div id="details-content" hidden></div>
+    </aside>
+  </main>
+
+  <dialog id="event-dialog">
+    <form id="event-form" method="dialog">
+      <h2 id="event-dialog-title">Add event</h2>
+      <label>Title
+        <input name="title" required maxlength="200">
+      </label>
+      <div class="row">
+        <label>Category
+          <select name="category" id="category-select" required></select>
+        </label>
+        <label class="checkbox"><input type="checkbox" name="approximate"> Approximate date</label>
+      </div>
+      <fieldset>
+        <legend>Start</legend>
+        <div class="row">
+          <label>Year (CE)
+            <input name="startYear" type="number" required min="1" max="3000" step="1">
+          </label>
+          <label>Month (optional)
+            <select name="startMonth" class="month-select"></select>
+          </label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>End <span class="muted">(only for events that span time)</span></legend>
+        <div class="row">
+          <label>Year (CE)
+            <input name="endYear" type="number" min="1" max="3000" step="1">
+          </label>
+          <label>Month (optional)
+            <select name="endMonth" class="month-select"></select>
+          </label>
+        </div>
+      </fieldset>
+      <p class="date-preview muted" id="date-preview"></p>
+      <label>Location
+        <input name="location" maxlength="200">
+      </label>
+      <label>Description
+        <textarea name="description" rows="4"></textarea>
+      </label>
+      <label>Sources / notes
+        <textarea name="sources" rows="2" placeholder="e.g. Ibn Hisham, al-Raheeq al-Makhtum…"></textarea>
+      </label>
+      <p class="form-error" id="form-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button type="button" class="btn danger" id="delete-event">Delete</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" id="cancel-event">Cancel</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="categories-dialog">
+    <form method="dialog" id="categories-form">
+      <h2>Categories</h2>
+      <p class="muted">Each category is one lane on the timeline.</p>
+      <div id="categories-list"></div>
+      <button type="button" class="btn" id="add-category">+ Add category</button>
+      <p class="form-error" id="categories-error" role="alert"></p>
+      <div class="dialog-actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn" id="cancel-categories">Cancel</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="js/seed-data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
