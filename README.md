@@ -28,6 +28,14 @@ Persia, China, India, Europe).
   optional end (year with an optional month), an "approximate date" flag,
   location, description and sources. The form shows the Hijri year and the
   Prophet's age as you type.
+- **Private notes («ملاحظاتي»).** Each event's panel has a notes section with an
+  inline composer (press **N** to jump to it, **Ctrl/⌘+Enter** to save). Notes
+  can be edited in place, and deleting one shows an undo toast. Events with notes
+  show a «✎ n» badge, the «لها ملاحظات» chip filters to them, and search covers
+  note text. The «ملاحظاتي» tab lists all your notes in Seerah order; click an
+  event heading to jump to it. Notes are private: on the hosted page each person's
+  notes are stored in their own `data/users/<id>/` space, which nobody else can
+  read. Notes on deleted events are kept under «أحداث محذوفة».
 - **Manage categories.** Add, rename, recolour, reorder and delete lanes.
 - **Filters and search.** Click the category chips to show or hide lanes
   (Alt/⌘-click shows only that lane), and search by text across titles,
@@ -57,8 +65,8 @@ The same code runs in two ways:
 
 | How it's opened | Where edits go |
 | --- | --- |
-| As the hosted claude.ai page | The page's own database. Edits are kept and show up on every device you open it on, and with anyone you share the page with. |
-| `index.html` opened directly or hosted elsewhere | This browser's localStorage only. Use Export/Import to move data between browsers. **Reset to sample data** is available here. |
+| As the hosted claude.ai page | The page's own database. Event edits are kept and show up on every device you open it on, and with anyone you share the page with. Notes are stored per person and stay private. |
+| `index.html` opened directly or hosted elsewhere | This browser's localStorage only (notes included). Use Export/Import to move data between browsers. **Reset to sample data** is available here. |
 
 To update the hosted page after changing the code, run
 `node scripts/build-artifact.mjs`. It bundles the HTML, CSS and JS into

@@ -21,6 +21,7 @@
       <div class="segmented" role="tablist" aria-label="طريقة العرض">
         <button type="button" role="tab" data-view="timeline" aria-selected="true">الخط الزمني</button>
         <button type="button" role="tab" data-view="grid" aria-selected="false">سنة بسنة</button>
+        <button type="button" role="tab" data-view="notes" aria-selected="false">ملاحظاتي</button>
       </div>
       <button type="button" class="btn primary needs-write" id="add-event">+ إضافة حدث</button>
       <details class="menu">
@@ -56,6 +57,10 @@
 
     <section class="view" id="grid-view" aria-label="سنة بسنة" hidden>
       <div class="grid-scroll" id="grid-scroll"></div>
+    </section>
+
+    <section class="view" id="notes-view" aria-label="ملاحظاتي" hidden>
+      <div class="notes-scroll" id="notes-list"></div>
     </section>
 
     <aside class="details" id="details" aria-live="polite">

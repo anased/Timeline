@@ -6,6 +6,7 @@
   // ---------------------------------------------------------------------------
   const DATA_KEY = "seerah-timeline:data:v1";
   const PREFS_KEY = "seerah-timeline:prefs:v1";
+  const NOTES_KEY = "seerah-timeline:notes:v1";
   const MONTHS = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
   // The page is Arabic and right-to-left: time runs from right (earlier) to left (later).
   const RTL = true;
@@ -36,18 +37,22 @@
   // ---------------------------------------------------------------------------
   let data = loadData();
   const prefs = Object.assign(
-    { view: "timeline", ppy: 40, hidden: [], window: 1 },
+    { view: "timeline", ppy: 40, hidden: [], window: 1, onlyNoted: false },
     readJSON(PREFS_KEY) || {}
   );
   const ui = {
-    view: prefs.view === "grid" ? "grid" : "timeline",
+    view: ["grid", "notes"].includes(prefs.view) ? prefs.view : "timeline",
     ppy: clamp(Number(prefs.ppy) || 40, MIN_PPY, MAX_PPY),
     hidden: new Set(Array.isArray(prefs.hidden) ? prefs.hidden : []),
     window: WINDOWS.some(w => w.value === prefs.window) ? prefs.window : 1,
+    onlyNoted: Boolean(prefs.onlyNoted),
     query: "",
     selectedId: null,
     editingId: null,
-    pendingCategory: null
+    pendingCategory: null,
+    noteDrafts: {},       // eventId -> unsent composer text
+    editingNoteId: null,  // note being edited in place
+    editDraft: ""
   };
 
   const $ = sel => document.querySelector(sel);
@@ -59,6 +64,8 @@
     tlInner: $("#tl-inner"),
     gridView: $("#grid-view"),
     gridScroll: $("#grid-scroll"),
+    notesView: $("#notes-view"),
+    notesList: $("#notes-list"),
     detailsEmpty: $("#details-empty"),
     detailsContent: $("#details-content"),
     eventDialog: $("#event-dialog"),
@@ -133,11 +140,14 @@
     } catch (_) { /* treated as unavailable */ }
     if (!db) {
       store.loading = false;
+      notes.list = loadLocalNotes();
+      indexNotes();
       render();
       return;
     }
     store.mode = "cloud";
     store.db = db;
+    connectNotes(db, user);
     if (user) {
       try {
         if (await user.can("data.write") === false) store.canWrite = false;
@@ -216,6 +226,177 @@
     return persist({ events: data.events, deleted, categories: true });
   }
 
+  // ---------------------------------------------------------------------------
+  // Notes: private to each person. Hosted, each note is a document in the viewer's own
+  // subtree (data/users/<id>/<noteId>), which nobody else can read. Otherwise notes live in
+  // this browser's localStorage.
+  // ---------------------------------------------------------------------------
+  const hosted = Boolean(window.claude && typeof window.claude.use === "function");
+  const notes = { list: hosted ? [] : loadLocalNotes(), mode: "local", col: null, canWrite: true };
+  let notesByEvent = new Map();
+  indexNotes();
+
+  function loadLocalNotes() {
+    const stored = readJSON(NOTES_KEY);
+    return stored && Array.isArray(stored.notes) ? stored.notes.map(normalizeNote).filter(Boolean) : [];
+  }
+
+  function normalizeNote(n) {
+    if (!n || typeof n.text !== "string" || !n.text.trim() || !n.eventId) return null;
+    const created = typeof n.createdAt === "string" ? n.createdAt : new Date().toISOString();
+    return {
+      id: String(n.id || uid()),
+      eventId: String(n.eventId),
+      text: n.text.trim(),
+      createdAt: created,
+      updatedAt: typeof n.updatedAt === "string" ? n.updatedAt : created
+    };
+  }
+
+  // Newest first within each event.
+  function indexNotes() {
+    notesByEvent = new Map();
+    [...notes.list].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).forEach(n => {
+      if (!notesByEvent.has(n.eventId)) notesByEvent.set(n.eventId, []);
+      notesByEvent.get(n.eventId).push(n);
+    });
+  }
+
+  function notesFor(eventId) {
+    return notesByEvent.get(eventId) || [];
+  }
+
+  function canWriteNotes() {
+    return notes.canWrite && store.canWrite;
+  }
+
+  async function connectNotes(db, user) {
+    let id = null;
+    try {
+      id = user ? await user.id() : null;
+    } catch (_) { /* no private subtree this visit */ }
+    if (!id) {
+      notes.list = loadLocalNotes();
+      indexNotes();
+      render();
+      return;
+    }
+    notes.mode = "cloud";
+    notes.col = db.collection("data/users/" + id);
+    notes.col.limit(1000).onSnapshot(snap => {
+      notes.list = snap.docs
+        .map(d => Object.assign({}, d.data(), { id: d.id }))
+        .filter(n => n.kind === "note")
+        .map(normalizeNote)
+        .filter(Boolean);
+      indexNotes();
+      render();
+    }, err => {
+      toast(`توقفت مزامنة ملاحظاتك (${err && err.message ? err.message : "انقطع الاتصال"}). أعد تحميل الصفحة.`, true);
+    });
+  }
+
+  async function persistNotes({ set = [], del = [] } = {}) {
+    if (notes.mode === "local") {
+      if (!writeJSON(NOTES_KEY, { version: 1, notes: notes.list })) {
+        toast("تعذّر حفظ ملاحظاتك في هذا المتصفح (التخزين غير متاح أو ممتلئ).", true);
+        return false;
+      }
+      return true;
+    }
+    const writes = [];
+    set.forEach(n => writes.push(() => notes.col.doc(n.id).set({
+      kind: "note", eventId: n.eventId, text: n.text, createdAt: n.createdAt, updatedAt: n.updatedAt
+    })));
+    del.forEach(id => writes.push(() => notes.col.doc(id).delete()));
+    setStatus("saving");
+    try {
+      for (let i = 0; i < writes.length; i += 6) {
+        await Promise.all(writes.slice(i, i + 6).map(w => w()));
+      }
+      setStatus("saved");
+      return true;
+    } catch (err) {
+      setStatus("error");
+      if (err && err.code === "invalid_argument") {
+        notes.canWrite = false;
+        toast("لا يمكنك إضافة ملاحظات في هذه الصفحة. اطلب من المالك صلاحية المشاركة.", true);
+        render();
+      } else {
+        toast(`لم تُحفظ الملاحظة: ${err && err.message ? err.message : "خطأ غير معروف"}. تحقق من الاتصال ثم حاول مجددًا.`, true);
+      }
+      return false;
+    }
+  }
+
+  function addNote(eventId, text) {
+    text = text.trim();
+    if (!text) return;
+    const now = new Date().toISOString();
+    const n = { id: uid(), eventId, text, createdAt: now, updatedAt: now };
+    notes.list.push(n);
+    indexNotes();
+    ui.noteDrafts[eventId] = "";
+    render();
+    persistNotes({ set: [n] });
+  }
+
+  function updateNote(id, text) {
+    text = text.trim();
+    const n = notes.list.find(x => x.id === id);
+    ui.editingNoteId = null;
+    ui.editDraft = "";
+    if (!n || !text || text === n.text) {
+      render();
+      return;
+    }
+    n.text = text;
+    n.updatedAt = new Date().toISOString();
+    indexNotes();
+    render();
+    persistNotes({ set: [n] });
+  }
+
+  function deleteNote(id) {
+    const n = notes.list.find(x => x.id === id);
+    if (!n) return;
+    notes.list = notes.list.filter(x => x.id !== id);
+    if (ui.editingNoteId === id) ui.editingNoteId = null;
+    indexNotes();
+    render();
+    persistNotes({ del: [id] });
+    toast("حُذفت الملاحظة.", false, {
+      label: "تراجع",
+      run: () => {
+        if (notes.list.some(x => x.id === n.id)) return;
+        notes.list.push(n);
+        indexNotes();
+        render();
+        persistNotes({ set: [n] });
+      }
+    });
+  }
+
+  // Removes the viewer's notes on events that were just deleted.
+  function dropNotesFor(eventIds) {
+    const ids = new Set(eventIds);
+    const gone = notes.list.filter(n => ids.has(n.eventId)).map(n => n.id);
+    if (!gone.length) return;
+    notes.list = notes.list.filter(n => !ids.has(n.eventId));
+    indexNotes();
+    persistNotes({ del: gone });
+  }
+
+  function formatNoteDate(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return "";
+    try {
+      return d.toLocaleDateString("ar-u-nu-latn", { day: "numeric", month: "long", year: "numeric" });
+    } catch (_) {
+      return d.toISOString().slice(0, 10);
+    }
+  }
+
   function setStatus(status) {
     store.status = status;
     renderStatus();
@@ -239,13 +420,25 @@
   }
 
   let toastTimer;
-  function toast(message, isError) {
+  // `action` ({label, run}) adds a button to the toast, e.g. undo.
+  function toast(message, isError, action) {
     const node = document.getElementById("toast");
     node.textContent = message;
+    if (action) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "toast-action";
+      btn.textContent = action.label;
+      btn.addEventListener("click", () => {
+        node.hidden = true;
+        action.run();
+      });
+      node.append(" ", btn);
+    }
     node.classList.toggle("error", Boolean(isError));
     node.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { node.hidden = true; }, isError ? 8000 : 3500);
+    toastTimer = setTimeout(() => { node.hidden = true; }, isError ? 8000 : (action ? 6000 : 3500));
   }
 
   // In-page replacement for confirm()/prompt(), which hosted pages block.
@@ -285,7 +478,7 @@
   }
 
   function savePrefs() {
-    writeJSON(PREFS_KEY, { view: ui.view, ppy: ui.ppy, hidden: [...ui.hidden], window: ui.window });
+    writeJSON(PREFS_KEY, { view: ui.view, ppy: ui.ppy, hidden: [...ui.hidden], window: ui.window, onlyNoted: ui.onlyNoted });
   }
 
   // ---------------------------------------------------------------------------
@@ -488,6 +681,7 @@
     if (!ui.query) return true;
     const q = normalizeText(ui.query);
     return [e.title, e.location, e.description, e.sources, categoryById(e.category).name]
+      .concat(notesFor(e.id).map(n => n.text))
       .some(f => f && normalizeText(f).includes(q));
   }
 
@@ -496,7 +690,9 @@
   }
 
   function visibleEvents() {
-    return data.events.filter(e => !ui.hidden.has(e.category) && matchesQuery(e)).sort(sortChrono);
+    return data.events
+      .filter(e => !ui.hidden.has(e.category) && (!ui.onlyNoted || notesFor(e.id).length) && matchesQuery(e))
+      .sort(sortChrono);
   }
 
   function selectedEvent() {
@@ -542,8 +738,10 @@
     });
     el.tlView.hidden = ui.view !== "timeline";
     el.gridView.hidden = ui.view !== "grid";
+    el.notesView.hidden = ui.view !== "notes";
     if (ui.view === "timeline") renderTimeline();
-    else renderGrid();
+    else if (ui.view === "grid") renderGrid();
+    else renderNotesView();
     renderDetails();
   }
 
@@ -554,7 +752,11 @@
       <button type="button" class="chip${ui.hidden.has(c.id) ? " off" : ""}" data-cat="${esc(c.id)}"
         aria-pressed="${!ui.hidden.has(c.id)}" style="--c:${c.color}">
         <span class="swatch"></span>${esc(c.name)}<span class="count">${counts[c.id] || 0}</span>
-      </button>`).join("");
+      </button>`).join("") + `
+      <button type="button" class="chip noted-chip${ui.onlyNoted ? " on" : ""}" data-noted aria-pressed="${ui.onlyNoted}"
+        title="إظهار الأحداث التي عليها ملاحظات فقط">
+        ✎ لها ملاحظات<span class="count">${data.events.filter(e => notesFor(e.id).length).length}</span>
+      </button>`;
   }
 
   function renderTimeline() {
@@ -592,7 +794,9 @@
         const span = isSpan(e);
         const barW = span ? Math.max(8, x(endOf(e)) - left) : 0;
         const labelW = Math.min(MAX_LABEL_W, Math.ceil(textWidth(e.title)));
-        const extent = span ? Math.max(barW, labelW + 16) : labelW + 22;
+        const noteCount = notesFor(e.id).length;
+        const badgeW = noteCount ? 34 : 0;
+        const extent = span ? Math.max(barW, labelW + 16 + badgeW) : labelW + 22 + badgeW;
         let row = rowsEnd.findIndex(end => end <= left - 6);
         if (row === -1) { row = rowsEnd.length; rowsEnd.push(0); }
         rowsEnd[row] = left + extent;
@@ -608,6 +812,7 @@
           title="${esc(e.title)} — ${esc(dateLabel(e))}">
           ${span ? `<span class="bar"></span>` : `<span class="dot"></span>`}
           <span class="label" style="max-width:${MAX_LABEL_W}px;${span ? `inset-inline-start:${LABEL_W + 4}px;` : ""}">${esc(e.title)}</span>
+          ${noteCount ? `<span class="note-badge" title="ملاحظاتك: ${noteCount}">✎ ${noteCount}</span>` : ""}
         </button>`;
       });
       const h = Math.max(1, rowsEnd.length) * ROW_H + LANE_PAD * 2;
@@ -644,6 +849,7 @@
         : "ستظهر الأحداث هنا عندما يضيفها المالك."}</p></div>`;
     }
     if (!data.categories.some(c => !ui.hidden.has(c.id)) || !cats.length) return `<p class="tl-empty">كل التصنيفات مخفية. فعّل أحدها من الأعلى.</p>`;
+    if (!events.length && ui.onlyNoted && !ui.query) return `<p class="tl-empty">لا توجد أحداث عليها ملاحظات بعد. ألغِ فلتر «لها ملاحظات» لرؤية كل الأحداث.</p>`;
     if (!events.length) return `<p class="tl-empty">لا توجد أحداث تطابق بحثك.</p>`;
     return "";
   }
@@ -684,7 +890,7 @@
           }
           const when = continuing ? "" : (e.startMonth ? MONTHS[e.startMonth - 1] : "");
           return `<button type="button" class="${cls.join(" ")}" data-id="${esc(e.id)}"${continuing ? ` title="${esc(e.title)} (continues from ${e.startYear})"` : ""}>
-            <span class="g-title">${esc(e.title)}</span>${when ? `<span class="g-when">${esc(when)}</span>` : ""}
+            <span class="g-title">${esc(e.title)}</span>${notesFor(e.id).length ? `<span class="note-badge" title="ملاحظاتك">✎ ${notesFor(e.id).length}</span>` : ""}${when ? `<span class="g-when">${esc(when)}</span>` : ""}
           </button>`;
         }).join("")}</td>`;
       });
@@ -699,7 +905,77 @@
     </table>`;
   }
 
+  // Re-rendering replaces the textareas; keep the caret where the person was typing.
+  function withFocusKept(container, fn) {
+    const active = document.activeElement;
+    const key = active && container.contains(active) && active.dataset ? active.dataset.focusKey : null;
+    const range = key && typeof active.selectionStart === "number" ? [active.selectionStart, active.selectionEnd] : null;
+    fn();
+    if (!key) return;
+    const again = container.querySelector(`[data-focus-key="${CSS.escape(key)}"]`);
+    if (!again) return;
+    again.focus();
+    if (range) again.setSelectionRange(range[0], range[1]);
+    autoGrow(again);
+  }
+
+  function autoGrow(t) {
+    if (!t || t.tagName !== "TEXTAREA") return;
+    t.style.height = "auto";
+    t.style.height = Math.min(t.scrollHeight + 2, 320) + "px";
+  }
+
+  function noteCard(n) {
+    if (ui.editingNoteId === n.id) {
+      return `<article class="note editing" data-note="${esc(n.id)}">
+        <textarea class="note-input" data-focus-key="edit-${esc(n.id)}" data-note-edit="${esc(n.id)}" rows="3" aria-label="تعديل الملاحظة">${esc(ui.editDraft)}</textarea>
+        <div class="note-row">
+          <span class="muted small">Ctrl+Enter للحفظ · Esc للإلغاء</span>
+          <span class="note-tools">
+            <button type="button" class="btn small" data-note-action="cancel">إلغاء</button>
+            <button type="button" class="btn small primary" data-note-action="save">حفظ</button>
+          </span>
+        </div>
+      </article>`;
+    }
+    const edited = n.updatedAt && n.updatedAt !== n.createdAt;
+    return `<article class="note" data-note="${esc(n.id)}">
+      <p class="note-text">${esc(n.text)}</p>
+      <div class="note-row">
+        <span class="muted small">${esc(formatNoteDate(n.createdAt))}${edited ? " · عُدّلت" : ""}</span>
+        ${canWriteNotes() ? `<span class="note-tools">
+          <button type="button" class="text-btn" data-note-action="edit">تعديل</button>
+          <button type="button" class="text-btn danger" data-note-action="delete">حذف</button>
+        </span>` : ""}
+      </div>
+    </article>`;
+  }
+
+  function renderNotesSection(sel) {
+    const list = notesFor(sel.id);
+    const draft = ui.noteDrafts[sel.id] || "";
+    return `<section class="d-notes" aria-label="ملاحظاتي">
+      <div class="d-notes-head">
+        <h3>ملاحظاتي <span class="count">${list.length}</span></h3>
+        <span class="muted small">🔒 ملاحظاتك خاصة بك ولا يراها غيرك</span>
+      </div>
+      ${canWriteNotes() ? `<div class="note-composer">
+        <textarea id="note-composer" class="note-input" data-focus-key="composer" data-event="${esc(sel.id)}" rows="2"
+          placeholder="اكتب ملاحظة… (فائدة، سؤال، مرجع)" aria-label="ملاحظة جديدة">${esc(draft)}</textarea>
+        <div class="note-row">
+          <span class="muted small">Ctrl+Enter للحفظ</span>
+          <button type="button" class="btn small primary" data-note-action="add" ${draft.trim() ? "" : "disabled"}>إضافة</button>
+        </div>
+      </div>` : ""}
+      ${list.length ? `<div class="note-list">${list.map(noteCard).join("")}</div>` : ""}
+    </section>`;
+  }
+
   function renderDetails() {
+    withFocusKept(el.detailsContent, renderDetailsNow);
+  }
+
+  function renderDetailsNow() {
     const sel = selectedEvent();
     el.detailsEmpty.hidden = Boolean(sel);
     el.detailsContent.hidden = !sel;
@@ -735,6 +1011,7 @@
         <button type="button" class="btn needs-write" data-action="edit">تعديل</button>
         <button type="button" class="btn needs-write" data-action="add-near">+ إضافة حدث في هذا الوقت</button>
       </div>
+      ${renderNotesSection(sel)}
       <div class="d-concurrent">
         <div class="d-conc-head">
           <h3>في الفترة نفسها <span class="count">${conc.length}</span></h3>
@@ -755,6 +1032,56 @@
       </div>`;
   }
 
+  function renderNotesView() {
+    withFocusKept(el.notesList, renderNotesViewNow);
+  }
+
+  function renderNotesViewNow() {
+    if (store.loading) {
+      el.notesList.innerHTML = `<p class="tl-empty">جارٍ تحميل ملاحظاتك…</p>`;
+      return;
+    }
+    if (!notes.list.length) {
+      el.notesList.innerHTML = `<div class="tl-empty"><p><strong>لا ملاحظات بعد.</strong></p>
+        <p>اختر حدثًا من الخط الزمني واكتب ملاحظتك في لوحة التفاصيل. ملاحظاتك خاصة بك ولا يراها غيرك.</p></div>`;
+      return;
+    }
+    const q = ui.query ? normalizeText(ui.query) : "";
+    const byId = new Map(data.events.map(e => [e.id, e]));
+    const groups = [];
+    data.events.filter(e => notesFor(e.id).length && !ui.hidden.has(e.category)).sort(sortChrono).forEach(e => {
+      let list = notesFor(e.id);
+      if (q && !normalizeText(e.title).includes(q)) list = list.filter(n => normalizeText(n.text).includes(q));
+      if (list.length) groups.push({ e, list });
+    });
+    const orphans = notes.list
+      .filter(n => !byId.has(n.eventId) && (!q || normalizeText(n.text).includes(q)))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const total = groups.reduce((sum, g) => sum + g.list.length, 0) + orphans.length;
+    if (!total) {
+      el.notesList.innerHTML = `<p class="tl-empty">لا توجد ملاحظات تطابق البحث أو التصنيفات المختارة.</p>`;
+      return;
+    }
+    el.notesList.innerHTML = `
+      <p class="notes-summary muted">${total} ملاحظة على ${groups.length + (orphans.length ? 1 : 0)} حدث · مرتبة بحسب السيرة</p>
+      ${groups.map(({ e, list }) => {
+        const cat = categoryById(e.category);
+        return `<section class="notes-group${e.id === ui.selectedId ? " is-selected" : ""}" style="--c:${cat.color}">
+          <button type="button" class="notes-group-head" data-open-event="${esc(e.id)}" title="عرض الحدث على الخط الزمني">
+            <span class="swatch"></span>
+            <span class="ng-title">${esc(e.title)}</span>
+            <span class="ng-date">${esc(dateLabel(e))} · ${esc(hijriLabel(e))}</span>
+          </button>
+          <div class="note-list">${list.map(noteCard).join("")}</div>
+        </section>`;
+      }).join("")}
+      ${orphans.length ? `<section class="notes-group orphan" style="--c:var(--muted)">
+        <div class="notes-group-head static"><span class="swatch"></span><span class="ng-title">أحداث محذوفة</span>
+          <span class="ng-date">ملاحظات على أحداث لم تعد في الخط الزمني</span></div>
+        <div class="note-list">${orphans.map(noteCard).join("")}</div>
+      </section>` : ""}`;
+  }
+
   // ---------------------------------------------------------------------------
   // Selection & navigation
   // ---------------------------------------------------------------------------
@@ -768,10 +1095,15 @@
     const node = (ui.view === "timeline" ? el.tlInner : el.gridScroll).querySelector(`[data-id="${CSS.escape(id)}"]`);
     if (!node) return;
     if (ui.view === "timeline") {
+      // One combined scroll: a separate scrollIntoView would cancel the horizontal one.
       const start = parseFloat(node.style.getPropertyValue("inset-inline-start")) || 0;
-      const target = start + LABEL_W - el.tlScroll.clientWidth / 2 + 80;
-      setScrollStart(Math.max(0, target), true);
-      node.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      const target = Math.max(0, start + LABEL_W - el.tlScroll.clientWidth / 2 + 80);
+      const box = el.tlScroll.getBoundingClientRect();
+      const r = node.getBoundingClientRect();
+      const axisH = 62;
+      let top = el.tlScroll.scrollTop;
+      if (r.top < box.top + axisH || r.bottom > box.bottom) top += r.top - box.top - axisH - 40;
+      el.tlScroll.scrollTo({ left: RTL ? -target : target, top: Math.max(0, top), behavior: "smooth" });
     } else {
       node.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
     }
@@ -990,7 +1322,13 @@
   // Import / export
   // ---------------------------------------------------------------------------
   async function exportData() {
-    const payload = { version: 1, exportedAt: new Date().toISOString(), categories: data.categories, events: [...data.events].sort(sortChrono) };
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      categories: data.categories,
+      events: [...data.events].sort(sortChrono),
+      notes: notes.list // only the viewer's own notes
+    };
     const json = JSON.stringify(payload, null, 2);
     const filename = `seerah-timeline-${new Date().toISOString().slice(0, 10)}.json`;
     if (window.claude && typeof window.claude.use === "function") {
@@ -1018,20 +1356,29 @@
   function importFile(file) {
     const reader = new FileReader();
     reader.onload = async () => {
-      let next;
+      let next, importedNotes = null;
       try {
-        next = normalizeData(JSON.parse(reader.result));
+        const raw = JSON.parse(reader.result);
+        next = normalizeData(raw);
+        if (raw && Array.isArray(raw.notes)) importedNotes = raw.notes.map(normalizeNote).filter(Boolean);
       } catch (err) {
         toast(`تعذّر استيراد "${file.name}": ${err.message}`, true);
         return;
       }
       const yes = await ask({
         title: "استبدال كل الأحداث؟",
-        message: `سيُستبدل بأحداثك الحالية (${data.events.length}) ما في الملف "${file.name}" (${next.events.length}).`,
+        message: `سيُستبدل بأحداثك الحالية (${data.events.length}) ما في الملف "${file.name}" (${next.events.length}).`
+          + (importedNotes ? ` وستُستبدل ملاحظاتك (${notes.list.length}) بملاحظات الملف (${importedNotes.length}).` : ""),
         okLabel: "استبدال",
         danger: true
       });
       if (!yes) return;
+      if (importedNotes) {
+        const old = notes.list.map(n => n.id);
+        notes.list = importedNotes;
+        indexNotes();
+        persistNotes({ set: importedNotes, del: old.filter(id => !importedNotes.some(n => n.id === id)) });
+      }
       if (await replaceAll(next)) toast(`تم استيراد ${next.events.length} حدثًا.`);
     };
     reader.readAsText(file);
@@ -1060,6 +1407,12 @@
     }));
 
     el.filters.addEventListener("click", e => {
+      if (e.target.closest("[data-noted]")) {
+        ui.onlyNoted = !ui.onlyNoted;
+        savePrefs();
+        render();
+        return;
+      }
       const chip = e.target.closest("[data-cat]");
       if (!chip) return;
       const id = chip.dataset.cat;
@@ -1112,6 +1465,84 @@
         openEventDialog(null, { startYear: sel.startYear, startMonth: sel.startMonth, approximate: sel.approximate });
       }
     });
+    // Notes: shared handlers for the details panel and the notes view.
+    const noteEvents = container => {
+      container.addEventListener("input", e => {
+        const t = e.target;
+        if (t.dataset.focusKey === "composer") {
+          ui.noteDrafts[t.dataset.event] = t.value;
+          const add = t.closest(".note-composer").querySelector('[data-note-action="add"]');
+          if (add) add.disabled = !t.value.trim();
+          autoGrow(t);
+        } else if (t.dataset.noteEdit) {
+          ui.editDraft = t.value;
+          autoGrow(t);
+        }
+      });
+      container.addEventListener("keydown", e => {
+        const t = e.target;
+        if (t.tagName !== "TEXTAREA") return;
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          if (t.dataset.focusKey === "composer") addNote(t.dataset.event, t.value);
+          else if (t.dataset.noteEdit) updateNote(t.dataset.noteEdit, t.value);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          if (t.dataset.focusKey === "composer") {
+            ui.noteDrafts[t.dataset.event] = "";
+            t.value = "";
+            t.blur();
+            render();
+          } else if (t.dataset.noteEdit) {
+            ui.editingNoteId = null;
+            render();
+          }
+        }
+      });
+      container.addEventListener("click", e => {
+        const open = e.target.closest("[data-open-event]");
+        if (open) {
+          ui.view = "timeline";
+          savePrefs();
+          select(open.dataset.openEvent, { scroll: true });
+          return;
+        }
+        const btn = e.target.closest("[data-note-action]");
+        if (!btn) return;
+        e.stopPropagation();
+        const action = btn.dataset.noteAction;
+        if (action === "add") {
+          const t = container.querySelector('[data-focus-key="composer"]');
+          if (t) addNote(t.dataset.event, t.value);
+          return;
+        }
+        const card = btn.closest("[data-note]");
+        const id = card && card.dataset.note;
+        if (!id) return;
+        if (action === "edit") {
+          const n = notes.list.find(x => x.id === id);
+          ui.editingNoteId = id;
+          ui.editDraft = n ? n.text : "";
+          render();
+          const t = document.querySelector(`[data-note-edit="${CSS.escape(id)}"]`);
+          if (t) {
+            t.focus();
+            t.setSelectionRange(t.value.length, t.value.length);
+            autoGrow(t);
+          }
+        } else if (action === "cancel") {
+          ui.editingNoteId = null;
+          render();
+        } else if (action === "save") {
+          updateNote(id, ui.editDraft);
+        } else if (action === "delete") {
+          deleteNote(id);
+        }
+      });
+    };
+    noteEvents(el.detailsContent);
+    noteEvents(el.notesList);
+
     el.detailsContent.addEventListener("change", e => {
       if (e.target.id !== "window-select") return;
       ui.window = Number(e.target.value);
@@ -1168,8 +1599,15 @@
     $("#delete-event").addEventListener("click", async () => {
       const ev = data.events.find(e => e.id === ui.editingId);
       if (!ev) return;
-      const yes = await ask({ title: "حذف هذا الحدث؟", message: `سيُحذف "${ev.title}" من الخط الزمني.`, okLabel: "حذف", danger: true });
+      const own = notesFor(ev.id).length;
+      const yes = await ask({
+        title: "حذف هذا الحدث؟",
+        message: `سيُحذف "${ev.title}" من الخط الزمني.${own ? ` وستُحذف ملاحظاتك عليه (${own}).` : ""}`,
+        okLabel: "حذف",
+        danger: true
+      });
       if (!yes) return;
+      dropNotesFor([ev.id]);
       data.events = data.events.filter(e => e.id !== ev.id);
       if (ui.selectedId === ev.id) ui.selectedId = null;
       ui.editingId = null;
@@ -1231,6 +1669,14 @@
       const tag = (e.target.tagName || "").toLowerCase();
       if (["input", "textarea", "select"].includes(tag)) return;
       if (e.key === "Escape" && ui.selectedId) return select(null);
+      if (e.code === "KeyN" && !e.ctrlKey && !e.metaKey && !e.altKey && ui.selectedId) {
+        const composer = document.getElementById("note-composer");
+        if (composer) {
+          e.preventDefault();
+          composer.focus();
+        }
+        return;
+      }
       if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && ui.selectedId) {
         const back = RTL ? e.key === "ArrowRight" : e.key === "ArrowLeft";
         const btn = el.detailsContent.querySelectorAll(".d-nav [data-goto]")[back ? 0 : 1];
