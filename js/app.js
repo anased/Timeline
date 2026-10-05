@@ -50,6 +50,7 @@
     selectedId: null,
     editingId: null,
     pendingCategory: null,
+    autoTitle: "",
     noteDrafts: {},       // eventId -> unsent composer text
     editingNoteId: null,  // note being edited in place
     editDraft: ""
@@ -518,12 +519,55 @@
       description: String(e.description || "").trim(),
       sources: String(e.sources || "").trim()
     };
+    const q = normalizeQuran(e.quran);
+    if (q) ev.quran = q;
     if (ev.endYear !== null && endOf(ev) <= startOf(ev)) {
       ev.endYear = null;
       ev.endMonth = null;
     }
     if (categoryIds) categoryIds.add(ev.category);
     return ev;
+  }
+
+  // { surah: 1–114, from, to } — from/to null means the whole Sura.
+  function normalizeQuran(q) {
+    if (!q || typeof q !== "object") return null;
+    const s = surahInfo(toInt(q.surah));
+    if (!s) return null;
+    let from = toInt(q.from), to = toInt(q.to);
+    if (from !== null && (from < 1 || from > s.ayat)) from = null;
+    if (to !== null && (to < 1 || to > s.ayat)) to = null;
+    if (from === null && to !== null) from = to;
+    if (from !== null && to === null) to = from;
+    if (from !== null && to < from) [from, to] = [to, from];
+    if (from === 1 && to === s.ayat) from = to = null;
+    return { surah: s.n, from, to };
+  }
+
+  function surahInfo(n) {
+    const list = window.SURAHS || [];
+    return n >= 1 && n <= list.length ? list[n - 1] : null;
+  }
+
+  function ayatLabel(q) {
+    if (q.from === null) return "السورة كاملة";
+    return q.from === q.to ? `الآية ${q.from}` : `الآيات ${q.from}–${q.to}`;
+  }
+
+  function quranTitle(q) {
+    const s = surahInfo(q.surah);
+    if (!s) return "";
+    if (q.from === null) return `سورة ${s.name}`;
+    return `سورة ${s.name} (${q.from === q.to ? q.from : `${q.from}–${q.to}`})`;
+  }
+
+  function quranLink(q) {
+    return `https://quran.com/${q.surah}${q.from === null ? "" : `/${q.from}${q.to !== q.from ? `-${q.to}` : ""}`}`;
+  }
+
+  function isQuranCategory(id) {
+    const c = data.categories.find(x => x.id === id);
+    return Boolean(c && c.kind === "quran");
   }
 
   function normalizeData(raw) {
@@ -544,7 +588,9 @@
       const id = String(c.id || c.name || "").trim();
       if (!id || catIds.has(id)) return;
       catIds.add(id);
-      cats.push({ id, name: String(c.name || id).trim(), color: validColor(c.color) || PALETTE[i % PALETTE.length] });
+      const cat = { id, name: String(c.name || id).trim(), color: validColor(c.color) || PALETTE[i % PALETTE.length] };
+      if (c.kind === "quran") cat.kind = "quran";
+      cats.push(cat);
     });
     used.forEach(id => {
       if (!catIds.has(id)) {
@@ -682,6 +728,7 @@
     const q = normalizeText(ui.query);
     return [e.title, e.location, e.description, e.sources, categoryById(e.category).name]
       .concat(notesFor(e.id).map(n => n.text))
+      .concat(e.quran && surahInfo(e.quran.surah) ? [`سورة ${surahInfo(e.quran.surah).name}`] : [])
       .some(f => f && normalizeText(f).includes(q));
   }
 
@@ -1004,6 +1051,13 @@
       <span class="cat-pill" style="--c:${cat.color}"><span class="swatch"></span>${esc(cat.name)}</span>
       <h2 class="d-title">${esc(sel.title)}</h2>
       <p class="d-date">${esc(dateLabel(sel))} · ${esc(hijriLabel(sel))}${age ? ` · ${esc(age)}` : ""}</p>
+      ${sel.quran && surahInfo(sel.quran.surah) ? (() => {
+        const s = surahInfo(sel.quran.surah);
+        return `<p class="d-quran">
+          <span class="d-quran-ref">سورة ${esc(s.name)} · ${esc(ayatLabel(sel.quran))} · ${s.type} · ترتيب النزول ${s.order}</span>
+          <a href="${quranLink(sel.quran)}" target="_blank" rel="noopener noreferrer">اقرأ الآيات ↗</a>
+        </p>`;
+      })() : ""}
       ${sel.location ? `<p class="d-loc">📍 ${esc(sel.location)}</p>` : ""}
       ${sel.description ? `<p class="d-desc">${esc(sel.description)}</p>` : ""}
       ${sel.sources ? `<p class="d-src"><strong>المصادر:</strong> ${esc(sel.sources)}</p>` : ""}
@@ -1153,7 +1207,44 @@
   function fillCategorySelect(selected) {
     el.categorySelect.innerHTML = data.categories
       .map(c => `<option value="${esc(c.id)}" ${c.id === selected ? "selected" : ""}>${esc(c.name)}</option>`)
-      .join("") + `<option value="__new">+ New category…</option>`;
+      .join("") + `<option value="__new">+ تصنيف جديد…</option>`;
+  }
+
+  function fillSurahSelect() {
+    const sel = el.eventForm.elements.surah;
+    if (sel.options.length > 1) return;
+    sel.innerHTML = `<option value="">— اختر السورة —</option>` +
+      (window.SURAHS || []).map(s => `<option value="${s.n}">${s.n} · ${esc(s.name)}</option>`).join("");
+  }
+
+  // Show the Sura fields only for a Quran category, and keep the hint and limits current.
+  function syncQuranFields() {
+    const f = el.eventForm.elements;
+    const on = isQuranCategory(f.category.value);
+    $("#quran-fields").hidden = !on;
+    const s = surahInfo(toInt(f.surah.value));
+    f.ayahFrom.max = f.ayahTo.max = s ? s.ayat : "";
+    $("#surah-hint").textContent = s ? `${s.type} · ${s.ayat} آية · ترتيب النزول ${s.order}` : "";
+  }
+
+  // Fill the title from the Sura while it is empty or still the last auto title.
+  function autoQuranTitle() {
+    const f = el.eventForm.elements;
+    const q = readQuran();
+    if (!q) return;
+    const t = quranTitle(q);
+    if (!f.title.value.trim() || f.title.value === ui.autoTitle) {
+      f.title.value = t;
+      ui.autoTitle = t;
+    }
+  }
+
+  function readQuran() {
+    const f = el.eventForm.elements;
+    if (!isQuranCategory(f.category.value)) return null;
+    const n = toInt(f.surah.value);
+    if (!surahInfo(n)) return null;
+    return normalizeQuran({ surah: n, from: f.ayahFrom.value, to: f.ayahTo.value });
   }
 
   function openEventDialog(ev, defaults) {
@@ -1172,6 +1263,12 @@
     f.location.value = src.location || "";
     f.description.value = src.description || "";
     f.sources.value = src.sources || "";
+    fillSurahSelect();
+    f.surah.value = src.quran ? src.quran.surah : "";
+    f.ayahFrom.value = src.quran && src.quran.from !== null ? src.quran.from : "";
+    f.ayahTo.value = src.quran && src.quran.to !== null ? src.quran.to : "";
+    ui.autoTitle = src.quran ? quranTitle(src.quran) : "";
+    syncQuranFields();
     $("#delete-event").hidden = !ev;
     el.formError.textContent = "";
     el.categorySelect.dataset.prev = el.categorySelect.value;
@@ -1192,7 +1289,8 @@
       approximate: f.approximate.checked,
       location: f.location.value.trim(),
       description: f.description.value.trim(),
-      sources: f.sources.value.trim()
+      sources: f.sources.value.trim(),
+      quran: readQuran()
     };
   }
 
@@ -1200,8 +1298,19 @@
     if (!v.title) return "اكتب عنوانًا للحدث.";
     if (!v.category || v.category === "__new") return "اختر تصنيفًا.";
     if (v.startYear === null) return "اكتب سنة البداية.";
+    if (v.startYear < 1 || v.startYear > 3000 || (v.endYear !== null && (v.endYear < 1 || v.endYear > 3000))) return "اكتب سنة بين 1 و3000.";
     if (v.endYear === null && v.endMonth) return "اكتب سنة النهاية، أو امسح شهر النهاية.";
     if (v.endYear !== null && endOf(v) <= startOf(v)) return "يجب أن تكون النهاية بعد البداية.";
+    if (isQuranCategory(v.category)) {
+      const f = el.eventForm.elements;
+      const s = surahInfo(toInt(f.surah.value));
+      if (!s) return "اختر السورة.";
+      const from = toInt(f.ayahFrom.value), to = toInt(f.ayahTo.value);
+      for (const a of [from, to]) {
+        if (a !== null && (a < 1 || a > s.ayat)) return `سورة ${s.name} ${s.ayat} آية، فاكتب رقم آية بين 1 و${s.ayat}.`;
+      }
+      if (from !== null && to !== null && to < from) return "رقم الآية الأخيرة يجب ألا يقل عن الأولى.";
+    }
     return "";
   }
 
@@ -1286,7 +1395,10 @@
         el.catError.textContent = "لكل تصنيف اسم لا بد منه.";
         return false;
       }
-      next.push({ id: r.dataset.id, name, color: r.querySelector('input[type="color"]').value });
+      const cat = { id: r.dataset.id, name, color: r.querySelector('input[type="color"]').value };
+      const old = data.categories.find(c => c.id === r.dataset.id);
+      if (old && old.kind) cat.kind = old.kind;
+      next.push(cat);
     }
     const keep = new Set(next.filter(c => c.id).map(c => c.id));
     const removed = data.categories.filter(c => !keep.has(c.id));
@@ -1565,13 +1677,18 @@
       e.preventDefault();
       saveEventFromForm();
     });
-    el.eventForm.addEventListener("input", () => {
+    el.eventForm.addEventListener("input", e => {
+      if (["surah", "ayahFrom", "ayahTo"].includes(e.target.name)) {
+        syncQuranFields();
+        autoQuranTitle();
+      }
       el.formError.textContent = "";
       updateDatePreview();
     });
     el.categorySelect.addEventListener("change", async () => {
       if (el.categorySelect.value !== "__new") {
         el.categorySelect.dataset.prev = el.categorySelect.value;
+        syncQuranFields();
         return;
       }
       const name = await ask({ title: "تصنيف جديد", input: { label: "الاسم", value: "" }, okLabel: "إضافة التصنيف" });

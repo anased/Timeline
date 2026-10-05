@@ -28,6 +28,16 @@ Persia, China, India, Europe).
   optional end (year with an optional month), an "approximate date" flag,
   location, description and sources. The form shows the Hijri year and the
   Prophet's age as you type.
+- **Quran revelation lane («تنزيل القرآن الكريم»).** Events in this lane carry a
+  Sura and an optional ayah range, picked in the form from all 114 Suras (the form
+  shows Makki/Madani, ayah count and order of revelation, and fills in the title).
+  The event panel shows «سورة الأنفال · الآيات 1–10 · مدنية · ترتيب النزول 88»
+  with a link to read the ayat on quran.com, and searching a Sura name finds its
+  entries. About 30 well-attested revelation timings are included; rulings such as
+  the Qibla and fasting stay in the «التشريع» lane. The Sura table
+  (`js/quran-data.js`) uses the Kufan ayah count and the al-Azhar order of
+  revelation. Any lane can hold Quran entries if its category has
+  `"kind": "quran"`.
 - **Private notes («ملاحظاتي»).** Each event's panel has a notes section with an
   inline composer (press **N** to jump to it, **Ctrl/⌘+Enter** to save). Notes
   can be edited in place, and deleting one shows an undo toast. Events with notes
@@ -81,6 +91,7 @@ bundled, because the hosted page loads its events from the database.
 | `css/styles.css` | Styles, with light and dark themes and a mobile layout |
 | `js/app.js` | Rendering, editing, storage, import and export |
 | `js/seed-data.js` | The sample events and categories |
+| `js/quran-data.js` | The 114 Suras: name, ayah count, Makki/Madani, order of revelation |
 | `scripts/build-artifact.mjs` | Bundles the app into one file for the hosted page |
 
 ## A note on dates

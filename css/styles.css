@@ -21,6 +21,8 @@
   --note-border: #eadfc2;
   --note-badge-bg: #e6f2ef;
   --note-badge-fg: #0f766e;
+  --quran-bg: #ecf5ee;
+  --quran-fg: #166534;
   color-scheme: light;
 }
 
@@ -47,6 +49,8 @@
     --note-border: #3a3824;
     --note-badge-bg: #11332f;
     --note-badge-fg: #5eead4;
+    --quran-bg: #13281b;
+    --quran-fg: #86efac;
     color-scheme: dark;
   }
 }
@@ -72,6 +76,8 @@
   --note-border: #3a3824;
   --note-badge-bg: #11332f;
   --note-badge-fg: #5eead4;
+  --quran-bg: #13281b;
+  --quran-fg: #86efac;
   color-scheme: dark;
 }
 
@@ -802,3 +808,23 @@ button.notes-group-head:hover .ng-title { text-decoration: underline; text-decor
 @media (max-width: 600px) {
   .notes-scroll { padding-inline: 16px; }
 }
+
+/* ---------- Quran revelation ---------- */
+#quran-fields { display: flex; flex-direction: column; gap: 8px; }
+#quran-fields[hidden] { display: none; }
+#quran-fields p { margin: 0; }
+.surah-hint:empty { display: none; }
+
+.d-quran {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--quran-bg);
+  border-inline-start: 3px solid var(--quran-fg);
+}
+.d-quran-ref { color: var(--quran-fg); font-weight: 600; }
+.d-quran a { color: var(--quran-fg); font-size: 13px; }
